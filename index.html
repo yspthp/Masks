@@ -3,12 +3,46 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>彩色原貌粒子面具與即時人臉追蹤</title>
+    <title>AR 虛化背景與彩色粒子面具</title>
     <style>
         body { margin: 0; background-color: #050508; overflow: hidden; color: white; font-family: sans-serif; }
-        #input_video { display: none; }
-        #webgl-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; }
-        #status { position: absolute; top: 20px; left: 20px; padding: 10px; background: rgba(255,255,255,0.1); border-left: 3px solid #ffffff; font-size: 14px; letter-spacing: 1px; z-index: 10; backdrop-filter: blur(5px); }
+        
+        /* 視訊背景鋪滿全螢幕，並帶有背景虛化與微調亮度，讓粒子面具更突出 */
+        #input_video { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100vw; 
+            height: 100vh; 
+            object-fit: cover; 
+            z-index: -1; 
+            transform: scaleX(-1);
+            filter: blur(8px) brightness(0.85); 
+            transition: filter 0.5s ease;
+        }
+
+        #webgl-container { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100vw; 
+            height: 100vh; 
+            z-index: 1; 
+            pointer-events: none; 
+        }
+
+        #status { 
+            position: absolute; 
+            top: 20px; 
+            left: 20px; 
+            padding: 10px; 
+            background: rgba(0,0,0,0.6); 
+            border-left: 3px solid #00ffcc; 
+            font-size: 14px; 
+            letter-spacing: 1px; 
+            z-index: 10; 
+            backdrop-filter: blur(5px); 
+        }
     </style>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -24,7 +58,7 @@
     </script>
 </head>
 <body>
-    <div id="status">INITIALIZING // 正在載入彩色粒子引擎...</div>
+    <div id="status">INITIALIZING // 正在啟動虛化背景與彩色粒子引擎...</div>
     <video id="input_video" playsinline></video>
     <div id="webgl-container"></div>
 
@@ -52,7 +86,6 @@
             let targetMesh = null;
             let targetTexture = null;
             
-            // 尋找網格與彩色貼圖
             gltf.scene.traverse((child) => {
                 if (child.isMesh && !targetMesh) {
                     targetMesh = child;
@@ -74,7 +107,6 @@
             const tempPosition = new THREE.Vector3();
             const tempUv = new THREE.Vector2();
 
-            // 提取頂點座標的同時，一併提取對應的 UV 貼圖座標
             for (let i = 0; i < particleCount; i++) {
                 sampler.sample(tempPosition, undefined, undefined, tempUv);
                 positions[i * 3] = tempPosition.x * 8.0;
@@ -90,17 +122,14 @@
             const material = new THREE.ShaderMaterial({
                 uniforms: {
                     uTime: { value: 0.0 },
-                    uTexture: { value: targetTexture } // 導入動物的真實彩色貼圖
+                    uTexture: { value: targetTexture }
                 },
                 vertexShader: `
                     uniform float uTime;
                     varying vec2 vUv;
-                    
                     void main() {
                         vUv = uv;
                         vec3 pos = position;
-                        
-                        // 保留流體擾動干擾
                         float noiseX = sin(pos.y * 2.0 + uTime * 2.0) * 0.2;
                         float noiseY = cos(pos.x * 2.0 + uTime * 2.5) * 0.2;
                         float noiseZ = sin(pos.x * 2.0 + pos.y * 2.0 + uTime * 3.0) * 0.3;
@@ -114,20 +143,16 @@
                 fragmentShader: `
                     uniform sampler2D uTexture;
                     varying vec2 vUv;
-                    
                     void main() {
                         vec2 coord = gl_PointCoord - vec2(0.5);
                         if (length(coord) > 0.5) discard;
-                        
-                        // 直接映射模型的原色像素
                         vec4 texColor = texture2D(uTexture, vUv);
                         float alpha = smoothstep(0.5, 0.1, length(coord));
-                        
                         gl_FragColor = vec4(texColor.rgb, alpha * texColor.a * 0.9);
                     }
                 `,
                 transparent: true,
-                blending: THREE.NormalBlending, // 改回標準混合模式，確保動物顏色準確不泛白
+                blending: THREE.NormalBlending,
                 depthWrite: false
             });
 
@@ -173,7 +198,7 @@
             });
             
             cameraUtils.start().then(() => {
-                statusElement.innerText = "SYSTEM ACTIVE // 原色粒子已鎖定臉部";
+                statusElement.innerText = "SYSTEM ACTIVE // 背景虛化與彩色粒子已同步";
                 setTimeout(() => { statusElement.style.opacity = '0'; }, 3000);
             });
         }
