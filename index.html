@@ -41,23 +41,30 @@
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
         /* ================= 使用者可調參數 ================= */
-        const SCALE_FACTOR = 8.0;      
-        const MASK_Y_OFFSET = 0.10;    
-        const ROTATION_AMP  = 0.8;     
-        const LERP_SPEED    = 0.3;     
-        const STRETCH_COMPENSATION = true; 
-
-        // 【關鍵校準參數】以 90 度為階梯去調，直到面具「企直」
-        // 如果面具平放（面朝上/下），請將 0 改為 90、-90 或 180 測試
-        const MODEL_PITCH_OFFSET = THREE.MathUtils.degToRad(180); 
-        const MODEL_YAW_OFFSET   = THREE.MathUtils.degToRad(0); 
-        const MODEL_ROLL_OFFSET  = THREE.MathUtils.degToRad(0); 
+        const SCALE_FACTOR = 12.0;     // 【大小】唔夠大就加（14、16）
+        const MASK_Y_OFFSET = 0.10;    // 【垂直微調】正數＝向上移
+        const ROTATION_AMP  = 0.8;     // 【轉頭幅度】想完全凍結俯仰可設 0
+        const LERP_SPEED    = 0.3;
+        const STRETCH_COMPENSATION = true;
+        // 【模型朝向補正】你試出 180 最啱，預設用佢；如仍微傾就試 160 / 200
+        const MODEL_PITCH_OFFSET = THREE.MathUtils.degToRad(180);
+        const MODEL_YAW_OFFSET   = THREE.MathUtils.degToRad(0);
+        const MODEL_ROLL_OFFSET  = THREE.MathUtils.degToRad(0);
 
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
         const statusElement = document.getElementById('status');
         const container = document.getElementById('webgl-container');
+
+        /* ===== 俯仰基線校準（消除「鼻永遠喺眼下」嘅假訊號） ===== */
+        let pitchBaseline = null;
+        let baselineCount = 0;
+        const BASELINE_FRAMES = 45;
+        let recalibrate = false;
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'r' || e.key === 'R') recalibrate = true;
+        });
 
         function resizeCanvas() {
             canvasElement.width = window.innerWidth;
@@ -156,9 +163,6 @@
             });
 
             particleSystem = new THREE.Points(geometry, material);
-            
-            // 【已移除子物體旋轉】所有旋轉統一由 maskGroup 處理
-            
             maskGroup.add(particleSystem);
             statusElement.innerText = "WAITING // 等待攝像頭權限授權...";
             initAIEngines();
@@ -187,11 +191,22 @@
                 const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
                 const targetScale = eyeDist * SCALE_FACTOR;
 
-                // 3. 旋轉（統一計算：動態追蹤 + 基礎補償）
+                // 3. 旋轉（基線校準後嘅真實俯仰）
                 const eyeCenterX = (eyeL.x + eyeR.x) / 2;
                 const eyeCenterY = (eyeL.y + eyeR.y) / 2;
-                
-                const dynamicPitch = -((nose.y - eyeCenterY) / eyeDist) * ROTATION_AMP;
+
+                const rawRatio = (nose.y - eyeCenterY) / eyeDist;
+                if (recalibrate) {
+                    pitchBaseline = rawRatio;
+                    baselineCount = BASELINE_FRAMES;
+                    recalibrate = false;
+                } else if (baselineCount < BASELINE_FRAMES) {
+                    pitchBaseline = (pitchBaseline ?? 0) + rawRatio / BASELINE_FRAMES;
+                    baselineCount++;
+                }
+                const base = pitchBaseline ?? rawRatio;
+
+                const dynamicPitch = -(rawRatio - base) * ROTATION_AMP;
                 const dynamicYaw   = -((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;
                 const dynamicRoll  = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x);
 
@@ -199,7 +214,6 @@
                 const targetYaw   = dynamicYaw   + MODEL_YAW_OFFSET;
                 const targetRoll  = dynamicRoll  + MODEL_ROLL_OFFSET;
 
-                // 位置與大小 Lerp
                 maskGroup.position.x += (targetX - maskGroup.position.x) * LERP_SPEED;
                 maskGroup.position.y += (targetY - maskGroup.position.y) * LERP_SPEED;
                 maskGroup.position.z += (targetZ - maskGroup.position.z) * LERP_SPEED;
@@ -210,7 +224,6 @@
                 const newScale = maskGroup.scale.x + (targetScale - maskGroup.scale.x) * LERP_SPEED;
                 maskGroup.scale.set(newScale, newScale * stretch, newScale);
 
-                // 角度歸一化 Lerp (防止 360 度翻滾)
                 let dPitch = targetPitch - maskGroup.rotation.x;
                 maskGroup.rotation.x += Math.atan2(Math.sin(dPitch), Math.cos(dPitch)) * LERP_SPEED;
 
@@ -264,8 +277,8 @@
             });
 
             cameraUtils.start().then(() => {
-                statusElement.innerText = "SYSTEM ACTIVE // 動態縮放、景深與追蹤已啟動";
-                setTimeout(() => { statusElement.style.opacity = '0'; }, 3000);
+                statusElement.innerText = "SYSTEM ACTIVE // 撳 R 鍵隨時校準平視姿勢";
+                setTimeout(() => { statusElement.style.opacity = '0'; }, 4000);
             });
         }
 
