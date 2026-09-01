@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AR 智慧人臉追蹤與彩色粒子面具</title>
+    <title>AR 智慧動態縮放與彩色粒子面具</title>
     <style>
         body { margin: 0; background-color: #050508; overflow: hidden; color: white; font-family: sans-serif; }
         
-        /* 讓視訊實景保持清晰，確保人臉不被模糊 */
-        #input_video { 
+        #input_video { display: none; }
+        
+        #output_canvas { 
             position: absolute; 
             top: 0; 
             left: 0; 
@@ -16,7 +17,7 @@
             height: 100vh; 
             object-fit: cover; 
             z-index: -1; 
-            transform: scaleX(-1);
+            transform: scaleX(-1); 
         }
 
         #webgl-container { 
@@ -27,6 +28,7 @@
             height: 100vh; 
             z-index: 1; 
             pointer-events: none; 
+            transform: scaleX(-1); 
         }
 
         #status { 
@@ -45,6 +47,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
 
     <script type="importmap">
         {
@@ -56,8 +59,9 @@
     </script>
 </head>
 <body>
-    <div id="status">INITIALIZING // 正在校正方向與清晰人像引擎...</div>
+    <div id="status">INITIALIZING // 載入動態縮放與景深虛化引擎...</div>
     <video id="input_video" playsinline></video>
+    <canvas id="output_canvas"></canvas>
     <div id="webgl-container"></div>
 
     <script type="module">
@@ -66,8 +70,17 @@
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
         const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
         const statusElement = document.getElementById('status');
         const container = document.getElementById('webgl-container');
+
+        function resizeCanvas() {
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
 
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -157,10 +170,10 @@
             particleSystem = new THREE.Points(geometry, material);
             scene.add(particleSystem);
             statusElement.innerText = "WAITING // 等待攝像頭權限授權...";
-            initFaceTracking();
+            initAIEngines();
         });
 
-        function initFaceTracking() {
+        function initAIEngines() {
             const faceMesh = new window.FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
             faceMesh.setOptions({ maxNumFaces: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
             
@@ -171,33 +184,70 @@
                     const nose = lm[1];
                     const aspect = window.innerWidth / window.innerHeight;
                     
+                    // 1. 位置跟隨
                     const targetX = (nose.x - 0.5) * 30.0 * aspect;
                     const targetY = -(nose.y - 0.5) * 30.0;
                     const targetZ = -nose.z * 15.0;
                     
-                    const top = lm[10], bottom = lm[152], left = lm[234], right = lm[454];
-                    const pitch = Math.atan2(bottom.z - top.z, bottom.y - top.y);
-                    const yaw = Math.atan2(right.z - left.z, right.x - left.x);
-                    const roll = Math.atan2(right.y - left.y, right.x - left.x);
-
                     particleSystem.position.x += (targetX - particleSystem.position.x) * 0.4;
                     particleSystem.position.y += (targetY - particleSystem.position.y) * 0.4;
                     particleSystem.position.z += (targetZ - particleSystem.position.z) * 0.4;
                     
-                    // 【修正點 1】：將旋轉軸加上負號，讓面具轉動方向與頭部完全同步
+                    // 2. 動態大小縮放：計算左右臉頰的距離來判定距離遠近與頭部大小
+                    const leftCheek = lm[234];
+                    const rightCheek = lm[454];
+                    const faceWidth = Math.sqrt(
+                        Math.pow(rightCheek.x - leftCheek.x, 2) + 
+                        Math.pow(rightCheek.y - leftCheek.y, 2)
+                    );
+                    // 根據實際畫面中的臉部寬度計算對應的 3D 縮放比例
+                    const targetScale = faceWidth * 35.0; 
+                    const currentScale = particleSystem.scale.x;
+                    const newScale = currentScale + (targetScale - currentScale) * 0.4;
+                    particleSystem.scale.set(newScale, newScale, newScale);
+
+                    // 3. 旋轉同步
+                    const top = lm[10], bottom = lm[152];
+                    const pitch = Math.atan2(bottom.z - top.z, bottom.y - top.y);
+                    const yaw = Math.atan2(rightCheek.z - leftCheek.z, rightCheek.x - leftCheek.x);
+                    const roll = Math.atan2(rightCheek.y - leftCheek.y, rightCheek.x - left.x);
+
                     particleSystem.rotation.x += (-pitch - particleSystem.rotation.x) * 0.4;
-                    particleSystem.rotation.y += (-yaw - particleSystem.rotation.y) * 0.4;
-                    particleSystem.rotation.z += (roll - particleSystem.rotation.z) * 0.4;
+                    particleSystem.rotation.y += (yaw - particleSystem.rotation.y) * 0.4;
+                    particleSystem.rotation.z += (-roll - particleSystem.rotation.z) * 0.4;
                 }
             });
 
+            const selfieSegmentation = new window.SelfieSegmentation({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`});
+            selfieSegmentation.setOptions({ modelSelection: 1 });
+
+            selfieSegmentation.onResults((results) => {
+                canvasCtx.save();
+                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+                canvasCtx.filter = 'blur(12px) brightness(0.9)';
+                canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+                
+                canvasCtx.globalCompositeOperation = 'destination-in';
+                canvasCtx.drawImage(results.segmentationMask, 0, 0, canvasElement.width, canvasElement.height);
+
+                canvasCtx.globalCompositeOperation = 'destination-over';
+                canvasCtx.filter = 'blur(12px) brightness(0.9)';
+                canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+                canvasCtx.restore();
+            });
+
             const cameraUtils = new window.Camera(videoElement, {
-                onFrame: async () => { await faceMesh.send({image: videoElement}); },
+                onFrame: async () => {
+                    await selfieSegmentation.send({image: videoElement});
+                    await faceMesh.send({image: videoElement});
+                },
                 width: 1280, height: 720
             });
             
             cameraUtils.start().then(() => {
-                statusElement.innerText = "SYSTEM ACTIVE // 人臉方向已校正，人像保持清晰";
+                statusElement.innerText = "SYSTEM ACTIVE // 動態縮放、景深與追蹤已啟動";
                 setTimeout(() => { statusElement.style.opacity = '0'; }, 3000);
             });
         }
@@ -208,12 +258,6 @@
             renderer.render(scene, camera);
         }
         animate();
-        
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
     </script>
 </body>
 </html>
