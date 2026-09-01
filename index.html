@@ -11,37 +11,27 @@
         
         #output_canvas { 
             position: absolute; 
-            top: 0; 
-            left: 0; 
-            width: 100vw; 
-            height: 100vh; 
+            top: 0; left: 0; 
+            width: 100vw; height: 100vh; 
             object-fit: cover; 
             z-index: -1; 
-            transform: scaleX(-1); 
+            transform: scaleX(-1); /* 保留視頻鏡像，等佢似照鏡 */
         }
 
         #webgl-container { 
             position: absolute; 
-            top: 0; 
-            left: 0; 
-            width: 100vw; 
-            height: 100vh; 
+            top: 0; left: 0; 
+            width: 100vw; height: 100vh; 
             z-index: 1; 
             pointer-events: none; 
-            transform: scaleX(-1); 
+            /* 【修正 1】移除呢度嘅 scaleX(-1)，改由 JS 內部處理鏡像座標，防止 3D 旋轉反向 */
         }
 
         #status { 
-            position: absolute; 
-            top: 20px; 
-            left: 20px; 
-            padding: 10px; 
-            background: rgba(0,0,0,0.6); 
-            border-left: 3px solid #00ffcc; 
-            font-size: 14px; 
-            letter-spacing: 1px; 
-            z-index: 10; 
-            backdrop-filter: blur(5px); 
+            position: absolute; top: 20px; left: 20px; 
+            padding: 10px; background: rgba(0,0,0,0.6); 
+            border-left: 3px solid #00ffcc; font-size: 14px; 
+            letter-spacing: 1px; z-index: 10; backdrop-filter: blur(5px); 
         }
     </style>
 
@@ -78,9 +68,11 @@
         function resizeCanvas() {
             canvasElement.width = window.innerWidth;
             canvasElement.height = window.innerHeight;
+            if (renderer) renderer.setSize(window.innerWidth, window.innerHeight);
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
         }
         window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
 
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -88,6 +80,7 @@
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         container.appendChild(renderer.domElement);
+        resizeCanvas();
 
         let particleSystem = null;
         const clock = new THREE.Clock();
@@ -100,14 +93,11 @@
             gltf.scene.traverse((child) => {
                 if (child.isMesh && !targetMesh) {
                     targetMesh = child;
-                    if (child.material && child.material.map) {
-                        targetTexture = child.material.map;
-                    }
+                    if (child.material && child.material.map) targetTexture = child.material.map;
                 }
             });
 
             if (!targetMesh) return statusElement.innerText = "ERROR // 檔案中未檢測到實體網格。";
-
             statusElement.innerText = "SAMPLING // 提取原色與表面採樣中...";
 
             const sampler = new MeshSurfaceSampler(targetMesh).build();
@@ -131,40 +121,28 @@
             geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
 
             const material = new THREE.ShaderMaterial({
-                uniforms: {
-                    uTime: { value: 0.0 },
-                    uTexture: { value: targetTexture }
-                },
+                uniforms: { uTime: { value: 0.0 }, uTexture: { value: targetTexture } },
                 vertexShader: `
-                    uniform float uTime;
-                    varying vec2 vUv;
+                    uniform float uTime; varying vec2 vUv;
                     void main() {
-                        vUv = uv;
-                        vec3 pos = position;
-                        float noiseX = sin(pos.y * 2.0 + uTime * 2.0) * 0.2;
-                        float noiseY = cos(pos.x * 2.0 + uTime * 2.5) * 0.2;
-                        float noiseZ = sin(pos.x * 2.0 + pos.y * 2.0 + uTime * 3.0) * 0.3;
-                        pos.x += noiseX; pos.y += noiseY; pos.z += noiseZ;
-                        
+                        vUv = uv; vec3 pos = position;
+                        pos.x += sin(pos.y * 2.0 + uTime * 2.0) * 0.2;
+                        pos.y += cos(pos.x * 2.0 + uTime * 2.5) * 0.2;
+                        pos.z += sin(pos.x * 2.0 + pos.y * 2.0 + uTime * 3.0) * 0.3;
                         vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
                         gl_PointSize = (12.0 + sin(uTime * 4.0 + pos.x)*3.0) * (5.0 / -mvPosition.z);
                         gl_Position = projectionMatrix * mvPosition;
-                    }
-                `,
+                    }`,
                 fragmentShader: `
-                    uniform sampler2D uTexture;
-                    varying vec2 vUv;
+                    uniform sampler2D uTexture; varying vec2 vUv;
                     void main() {
                         vec2 coord = gl_PointCoord - vec2(0.5);
                         if (length(coord) > 0.5) discard;
                         vec4 texColor = texture2D(uTexture, vUv);
                         float alpha = smoothstep(0.5, 0.1, length(coord));
                         gl_FragColor = vec4(texColor.rgb, alpha * texColor.a * 0.9);
-                    }
-                `,
-                transparent: true,
-                blending: THREE.NormalBlending,
-                depthWrite: false
+                    }`,
+                transparent: true, blending: THREE.NormalBlending, depthWrite: false
             });
 
             particleSystem = new THREE.Points(geometry, material);
@@ -181,36 +159,41 @@
                 if (!particleSystem) return;
                 if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                     const lm = results.multiFaceLandmarks[0];
-                    const nose = lm[1];
                     const aspect = window.innerWidth / window.innerHeight;
                     
-                    // 1. 位置跟隨
-                    const targetX = (nose.x - 0.5) * 30.0 * aspect;
-                    const targetY = -(nose.y - 0.5) * 30.0;
-                    const targetZ = -nose.z * 15.0;
+                    // 【修正 1】將 X 座標鏡像，匹配 CSS 鏡像後嘅視頻，解決左右反向同旋轉甩位問題
+                    const mirror = (pt) => ({ x: 1.0 - pt.x, y: pt.y, z: pt.z });
+                    const nose = mirror(lm[1]);
+                    const leftCheek = mirror(lm[234]);
+                    const rightCheek = mirror(lm[454]);
+                    const top = mirror(lm[10]);
+                    const bottom = mirror(lm[152]);
+
+                    // 計算 3D 空間嘅真實可視闊高
+                    const frustumHeight = 2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+                    const frustumWidth = frustumHeight * aspect;
+                    
+                    const targetX = (nose.x - 0.5) * frustumWidth;
+                    const targetY = -(nose.y - 0.5) * frustumHeight;
+                    
+                    // 【修正 2】用面闊計算真實 Z 軸深度，等透視相機自動處理近大遠細
+                    const faceWidth = Math.sqrt(Math.pow(rightCheek.x - leftCheek.x, 2) + Math.pow(rightCheek.y - leftCheek.y, 2));
+                    const clampedFaceWidth = Math.max(0.1, faceWidth);
+                    const refFaceWidth = 0.35; // 微調參數：正常距離下畫面中臉部佔比
+                    const currentDistance = camera.position.z * (refFaceWidth / clampedFaceWidth);
+                    const targetZ = camera.position.z - currentDistance;
                     
                     particleSystem.position.x += (targetX - particleSystem.position.x) * 0.4;
                     particleSystem.position.y += (targetY - particleSystem.position.y) * 0.4;
                     particleSystem.position.z += (targetZ - particleSystem.position.z) * 0.4;
                     
-                    // 2. 動態大小縮放：計算左右臉頰的距離來判定距離遠近與頭部大小
-                    const leftCheek = lm[234];
-                    const rightCheek = lm[454];
-                    const faceWidth = Math.sqrt(
-                        Math.pow(rightCheek.x - leftCheek.x, 2) + 
-                        Math.pow(rightCheek.y - leftCheek.y, 2)
-                    );
-                    // 根據實際畫面中的臉部寬度計算對應的 3D 縮放比例
-                    const targetScale = faceWidth * 35.0; 
-                    const currentScale = particleSystem.scale.x;
-                    const newScale = currentScale + (targetScale - currentScale) * 0.4;
-                    particleSystem.scale.set(newScale, newScale, newScale);
+                    // 固定 3D 比例，等 Z 軸深度變化自然帶動縮放
+                    const baseScale = 12.0; // 微調參數：根據你個 .glb 檔案嘅實際大細調整
+                    particleSystem.scale.set(baseScale, baseScale, baseScale);
 
-                    // 3. 旋轉同步
-                    const top = lm[10], bottom = lm[152];
                     const pitch = Math.atan2(bottom.z - top.z, bottom.y - top.y);
                     const yaw = Math.atan2(rightCheek.z - leftCheek.z, rightCheek.x - leftCheek.x);
-                    const roll = Math.atan2(rightCheek.y - leftCheek.y, rightCheek.x - left.x);
+                    const roll = Math.atan2(rightCheek.y - leftCheek.y, rightCheek.x - leftCheek.x); // 修正咗原本 left.x 嘅 typo
 
                     particleSystem.rotation.x += (-pitch - particleSystem.rotation.x) * 0.4;
                     particleSystem.rotation.y += (yaw - particleSystem.rotation.y) * 0.4;
@@ -225,16 +208,30 @@
                 canvasCtx.save();
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-                canvasCtx.filter = 'blur(12px) brightness(0.9)';
+                // 【修正 3】先畫模糊背景
+                canvasCtx.filter = 'blur(15px) brightness(0.85)';
                 canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-                
-                canvasCtx.globalCompositeOperation = 'destination-in';
-                canvasCtx.drawImage(results.segmentationMask, 0, 0, canvasElement.width, canvasElement.height);
+                canvasCtx.filter = 'none';
 
-                canvasCtx.globalCompositeOperation = 'destination-over';
-                canvasCtx.filter = 'blur(12px) brightness(0.9)';
-                canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+                // 用離屏 Canvas 摳出清晰嘅人物主體
+                if (!window._fgCanvas) {
+                    window._fgCanvas = document.createElement('canvas');
+                    window._fgCtx = window._fgCanvas.getContext('2d');
+                }
+                const fgCanvas = window._fgCanvas;
+                const fgCtx = window._fgCtx;
+                if (fgCanvas.width !== canvasElement.width) {
+                    fgCanvas.width = canvasElement.width; fgCanvas.height = canvasElement.height;
+                }
 
+                fgCtx.clearRect(0, 0, fgCanvas.width, fgCanvas.height);
+                fgCtx.drawImage(results.image, 0, 0, fgCanvas.width, fgCanvas.height);
+                fgCtx.globalCompositeOperation = 'destination-in';
+                fgCtx.drawImage(results.segmentationMask, 0, 0, fgCanvas.width, fgCanvas.height);
+                fgCtx.globalCompositeOperation = 'source-over';
+
+                // 將清晰人物疊加喺模糊背景上
+                canvasCtx.drawImage(fgCanvas, 0, 0);
                 canvasCtx.restore();
             });
 
