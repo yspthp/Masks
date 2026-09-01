@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AR 虛化背景與彩色粒子面具</title>
+    <title>AR 智慧人臉追蹤與彩色粒子面具</title>
     <style>
         body { margin: 0; background-color: #050508; overflow: hidden; color: white; font-family: sans-serif; }
         
-        /* 視訊背景鋪滿全螢幕，並帶有背景虛化與微調亮度，讓粒子面具更突出 */
+        /* 讓視訊實景保持清晰，確保人臉不被模糊 */
         #input_video { 
             position: absolute; 
             top: 0; 
@@ -17,8 +17,6 @@
             object-fit: cover; 
             z-index: -1; 
             transform: scaleX(-1);
-            filter: blur(8px) brightness(0.85); 
-            transition: filter 0.5s ease;
         }
 
         #webgl-container { 
@@ -58,7 +56,7 @@
     </script>
 </head>
 <body>
-    <div id="status">INITIALIZING // 正在啟動虛化背景與彩色粒子引擎...</div>
+    <div id="status">INITIALIZING // 正在校正方向與清晰人像引擎...</div>
     <video id="input_video" playsinline></video>
     <div id="webgl-container"></div>
 
@@ -186,9 +184,10 @@
                     particleSystem.position.y += (targetY - particleSystem.position.y) * 0.4;
                     particleSystem.position.z += (targetZ - particleSystem.position.z) * 0.4;
                     
-                    particleSystem.rotation.x += (pitch - particleSystem.rotation.x) * 0.4;
-                    particleSystem.rotation.y += (yaw - particleSystem.rotation.y) * 0.4;
-                    particleSystem.rotation.z += (-roll - particleSystem.rotation.z) * 0.4;
+                    // 【修正點 1】：將旋轉軸加上負號，讓面具轉動方向與頭部完全同步
+                    particleSystem.rotation.x += (-pitch - particleSystem.rotation.x) * 0.4;
+                    particleSystem.rotation.y += (-yaw - particleSystem.rotation.y) * 0.4;
+                    particleSystem.rotation.z += (roll - particleSystem.rotation.z) * 0.4;
                 }
             });
 
@@ -198,7 +197,7 @@
             });
             
             cameraUtils.start().then(() => {
-                statusElement.innerText = "SYSTEM ACTIVE // 背景虛化與彩色粒子已同步";
+                statusElement.innerText = "SYSTEM ACTIVE // 人臉方向已校正，人像保持清晰";
                 setTimeout(() => { statusElement.style.opacity = '0'; }, 3000);
             });
         }
