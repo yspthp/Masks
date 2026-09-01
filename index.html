@@ -43,12 +43,13 @@
         /* ================= 使用者可調參數 ================= */
         const SCALE_FACTOR = 8.0;      // 【大小】太細就加大
         const MASK_Y_OFFSET = 0.10;    // 【垂直微調】正數＝向上移
-        const ROTATION_AMP  = 1.0;     // 【轉頭幅度】改為 1:1 跟隨，唔再過度放大
+        const ROTATION_AMP  = 0.8;     // 【轉頭幅度】收細咗，跟隨更自然
         const LERP_SPEED    = 0.3;     // 【平滑度】
-        const STRETCH_COMPENSATION = true; // 【比例補償開關】false = 關閉
-        // 【模型固有朝向補正】你個 GLB 自帶 90° 誤差，呢度補返
-        // 如果正視時面具仍然橫放／倒轉，就順序試：+Math.PI/2、Math.PI、0
-        const MODEL_PITCH_OFFSET = -Math.PI / 2;
+        const STRETCH_COMPENSATION = true; // 【比例補償開關】
+        // 【模型朝向補正（度數）】平視校準用：
+        //   面具仍向上傾 → 改更負（-120、-130）
+        //   面具向下傾 → 改更正（-100、-90）
+        const MODEL_PITCH_OFFSET = THREE.MathUtils.degToRad(-110);
 
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
@@ -154,7 +155,7 @@
 
             particleSystem = new THREE.Points(geometry, material);
 
-            // 【關鍵修正】補償模型自帶嘅 90° 朝向誤差
+            // 【朝向補正】抵消模型自帶誤差
             particleSystem.rotation.x = MODEL_PITCH_OFFSET;
 
             maskGroup.add(particleSystem);
@@ -185,12 +186,13 @@
                 const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
                 const targetScale = eyeDist * SCALE_FACTOR;
 
-                // 3. 旋轉（1:1 跟隨，唔再放大）
+                // 3. 旋轉
                 const eyeCenterX = (eyeL.x + eyeR.x) / 2;
                 const eyeCenterY = (eyeL.y + eyeR.y) / 2;
                 const roll  = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x);
                 const yaw   = ((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;
-                const pitch = ((nose.y - eyeCenterY) / eyeDist) * ROTATION_AMP;
+                // 【關鍵修正】符號反轉：面具而家同頭部同方向傾俯
+                const pitch = -((nose.y - eyeCenterY) / eyeDist) * ROTATION_AMP;
 
                 maskGroup.position.x += (targetX - maskGroup.position.x) * LERP_SPEED;
                 maskGroup.position.y += (targetY - maskGroup.position.y) * LERP_SPEED;
