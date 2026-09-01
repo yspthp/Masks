@@ -151,7 +151,7 @@
                 const targetZ = 0; // 固定喺原點，等相機自然透視
                 
                 const faceWidth = Math.hypot(rightCheek.x - leftCheek.x, rightCheek.y - leftCheek.y);
-                const targetScale = faceWidth * 40.0; // 【微調參數 A】面具大細基數
+                const targetScale = faceWidth * 10.0; // 【微調參數 A】面具大細基數
 
                 // 【核心修正 3】純 2D 幾何旋轉 (極度穩定，唔會抖動)
                 const roll = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x); // 歪頭
