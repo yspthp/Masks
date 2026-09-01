@@ -41,15 +41,17 @@
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
         /* ================= 使用者可調參數 ================= */
-        const SCALE_FACTOR = 8.0;      // 【大小】太細就加大
-        const MASK_Y_OFFSET = 0.10;    // 【垂直微調】正數＝向上移
-        const ROTATION_AMP  = 0.8;     // 【轉頭幅度】收細咗，跟隨更自然
-        const LERP_SPEED    = 0.3;     // 【平滑度】
-        const STRETCH_COMPENSATION = true; // 【比例補償開關】
-        // 【模型朝向補正（度數）】平視校準用：
-        //   面具仍向上傾 → 改更負（-120、-130）
-        //   面具向下傾 → 改更正（-100、-90）
-        const MODEL_PITCH_OFFSET = THREE.MathUtils.degToRad(-150);
+        const SCALE_FACTOR = 8.0;      
+        const MASK_Y_OFFSET = 0.10;    
+        const ROTATION_AMP  = 0.8;     
+        const LERP_SPEED    = 0.3;     
+        const STRETCH_COMPENSATION = true; 
+
+        // 【關鍵校準參數】以 90 度為階梯去調，直到面具「企直」
+        // 如果面具平放（面朝上/下），請將 0 改為 90、-90 或 180 測試
+        const MODEL_PITCH_OFFSET = THREE.MathUtils.degToRad(0); 
+        const MODEL_YAW_OFFSET   = THREE.MathUtils.degToRad(0); 
+        const MODEL_ROLL_OFFSET  = THREE.MathUtils.degToRad(0); 
 
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
@@ -154,10 +156,9 @@
             });
 
             particleSystem = new THREE.Points(geometry, material);
-
-            // 【朝向補正】抵消模型自帶誤差
-            particleSystem.rotation.x = MODEL_PITCH_OFFSET;
-
+            
+            // 【已移除子物體旋轉】所有旋轉統一由 maskGroup 處理
+            
             maskGroup.add(particleSystem);
             statusElement.innerText = "WAITING // 等待攝像頭權限授權...";
             initAIEngines();
@@ -186,34 +187,38 @@
                 const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
                 const targetScale = eyeDist * SCALE_FACTOR;
 
-                // 3. 旋轉
+                // 3. 旋轉（統一計算：動態追蹤 + 基礎補償）
                 const eyeCenterX = (eyeL.x + eyeR.x) / 2;
                 const eyeCenterY = (eyeL.y + eyeR.y) / 2;
-                const roll  = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x);
-                const yaw   = ((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;
-                // 【關鍵修正】符號反轉：面具而家同頭部同方向傾俯
-                const pitch = -((nose.y - eyeCenterY) / eyeDist) * ROTATION_AMP;
+                
+                const dynamicPitch = -((nose.y - eyeCenterY) / eyeDist) * ROTATION_AMP;
+                const dynamicYaw   = -((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;
+                const dynamicRoll  = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x);
 
+                const targetPitch = dynamicPitch + MODEL_PITCH_OFFSET;
+                const targetYaw   = dynamicYaw   + MODEL_YAW_OFFSET;
+                const targetRoll  = dynamicRoll  + MODEL_ROLL_OFFSET;
+
+                // 位置與大小 Lerp
                 maskGroup.position.x += (targetX - maskGroup.position.x) * LERP_SPEED;
                 maskGroup.position.y += (targetY - maskGroup.position.y) * LERP_SPEED;
                 maskGroup.position.z += (targetZ - maskGroup.position.z) * LERP_SPEED;
 
                 const videoAspect = (videoElement.videoWidth && videoElement.videoHeight)
-                    ? videoElement.videoWidth / videoElement.videoHeight
-                    : (16 / 9);
+                    ? videoElement.videoWidth / videoElement.videoHeight : (16 / 9);
                 const stretch = STRETCH_COMPENSATION ? (videoAspect / aspect) : 1.0;
-
                 const newScale = maskGroup.scale.x + (targetScale - maskGroup.scale.x) * LERP_SPEED;
                 maskGroup.scale.set(newScale, newScale * stretch, newScale);
 
-                let dRoll = roll - maskGroup.rotation.z;
-                maskGroup.rotation.z += Math.atan2(Math.sin(dRoll), Math.cos(dRoll)) * LERP_SPEED;
+                // 角度歸一化 Lerp (防止 360 度翻滾)
+                let dPitch = targetPitch - maskGroup.rotation.x;
+                maskGroup.rotation.x += Math.atan2(Math.sin(dPitch), Math.cos(dPitch)) * LERP_SPEED;
 
-                let dYaw = -yaw - maskGroup.rotation.y;
+                let dYaw = targetYaw - maskGroup.rotation.y;
                 maskGroup.rotation.y += Math.atan2(Math.sin(dYaw), Math.cos(dYaw)) * LERP_SPEED;
 
-                let dPitch = pitch - maskGroup.rotation.x;
-                maskGroup.rotation.x += Math.atan2(Math.sin(dPitch), Math.cos(dPitch)) * LERP_SPEED;
+                let dRoll = targetRoll - maskGroup.rotation.z;
+                maskGroup.rotation.z += Math.atan2(Math.sin(dRoll), Math.cos(dRoll)) * LERP_SPEED;
             });
 
             const selfieSegmentation = new window.SelfieSegmentation({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}` });
