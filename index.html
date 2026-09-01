@@ -6,32 +6,21 @@
     <title>AR 智慧動態縮放與彩色粒子面具</title>
     <style>
         body { margin: 0; background-color: #050508; overflow: hidden; color: white; font-family: sans-serif; }
-        
         #input_video { display: none; }
         
+        /* 【修正】移除所有 scaleX(-1)，改由 JS 內部統一處理鏡像，防止座標系撕裂 */
         #output_canvas { 
-            position: absolute; 
-            top: 0; left: 0; 
-            width: 100vw; height: 100vh; 
-            object-fit: cover; 
-            z-index: -1; 
-            transform: scaleX(-1); /* 保留視頻鏡像，等佢似照鏡 */
+            position: absolute; top: 0; left: 0; 
+            width: 100vw; height: 100vh; object-fit: cover; z-index: -1; 
         }
-
         #webgl-container { 
-            position: absolute; 
-            top: 0; left: 0; 
-            width: 100vw; height: 100vh; 
-            z-index: 1; 
-            pointer-events: none; 
-            /* 【修正 1】移除呢度嘅 scaleX(-1)，改由 JS 內部處理鏡像座標，防止 3D 旋轉反向 */
+            position: absolute; top: 0; left: 0; 
+            width: 100vw; height: 100vh; z-index: 1; pointer-events: none; 
         }
-
         #status { 
-            position: absolute; top: 20px; left: 20px; 
-            padding: 10px; background: rgba(0,0,0,0.6); 
-            border-left: 3px solid #00ffcc; font-size: 14px; 
-            letter-spacing: 1px; z-index: 10; backdrop-filter: blur(5px); 
+            position: absolute; top: 20px; left: 20px; padding: 10px; 
+            background: rgba(0,0,0,0.6); border-left: 3px solid #00ffcc; 
+            font-size: 14px; letter-spacing: 1px; z-index: 10; backdrop-filter: blur(5px); 
         }
     </style>
 
@@ -40,12 +29,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
 
     <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-            }
-        }
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
     </script>
 </head>
 <body>
@@ -76,7 +60,7 @@
 
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.z = 25;
+        camera.position.z = 25; // 相機固定喺安全距離
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         container.appendChild(renderer.domElement);
@@ -87,16 +71,13 @@
         const loader = new GLTFLoader();
         
         loader.load('./model.glb', (gltf) => {
-            let targetMesh = null;
-            let targetTexture = null;
-            
+            let targetMesh = null, targetTexture = null;
             gltf.scene.traverse((child) => {
                 if (child.isMesh && !targetMesh) {
                     targetMesh = child;
                     if (child.material && child.material.map) targetTexture = child.material.map;
                 }
             });
-
             if (!targetMesh) return statusElement.innerText = "ERROR // 檔案中未檢測到實體網格。";
             statusElement.innerText = "SAMPLING // 提取原色與表面採樣中...";
 
@@ -105,18 +86,15 @@
             const geometry = new THREE.BufferGeometry();
             const positions = new Float32Array(particleCount * 3);
             const uvs = new Float32Array(particleCount * 2);
-            const tempPosition = new THREE.Vector3();
-            const tempUv = new THREE.Vector2();
+            const tempPosition = new THREE.Vector3(), tempUv = new THREE.Vector2();
 
             for (let i = 0; i < particleCount; i++) {
                 sampler.sample(tempPosition, undefined, undefined, tempUv);
                 positions[i * 3] = tempPosition.x * 8.0;
                 positions[i * 3 + 1] = tempPosition.y * 8.0;
                 positions[i * 3 + 2] = tempPosition.z * 8.0;
-                uvs[i * 2] = tempUv.x;
-                uvs[i * 2 + 1] = tempUv.y;
+                uvs[i * 2] = tempUv.x; uvs[i * 2 + 1] = tempUv.y;
             }
-
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
             geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
 
@@ -139,8 +117,7 @@
                         vec2 coord = gl_PointCoord - vec2(0.5);
                         if (length(coord) > 0.5) discard;
                         vec4 texColor = texture2D(uTexture, vUv);
-                        float alpha = smoothstep(0.5, 0.1, length(coord));
-                        gl_FragColor = vec4(texColor.rgb, alpha * texColor.a * 0.9);
+                        gl_FragColor = vec4(texColor.rgb, smoothstep(0.5, 0.1, length(coord)) * texColor.a * 0.9);
                     }`,
                 transparent: true, blending: THREE.NormalBlending, depthWrite: false
             });
@@ -156,49 +133,44 @@
             faceMesh.setOptions({ maxNumFaces: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
             
             faceMesh.onResults((results) => {
-                if (!particleSystem) return;
-                if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-                    const lm = results.multiFaceLandmarks[0];
-                    const aspect = window.innerWidth / window.innerHeight;
-                    
-                    // 【修正 1】將 X 座標鏡像，匹配 CSS 鏡像後嘅視頻，解決左右反向同旋轉甩位問題
-                    const mirror = (pt) => ({ x: 1.0 - pt.x, y: pt.y, z: pt.z });
-                    const nose = mirror(lm[1]);
-                    const leftCheek = mirror(lm[234]);
-                    const rightCheek = mirror(lm[454]);
-                    const top = mirror(lm[10]);
-                    const bottom = mirror(lm[152]);
+                if (!particleSystem || !results.multiFaceLandmarks?.length) return;
+                const lm = results.multiFaceLandmarks[0];
+                const aspect = window.innerWidth / window.innerHeight;
+                
+                // 【核心修正 1】鏡像 X 座標，匹配前置鏡頭嘅視覺習慣
+                const mx = (pt) => ({ x: 1.0 - pt.x, y: pt.y });
+                const nose = mx(lm[1]);
+                const leftCheek = mx(lm[234]);
+                const rightCheek = mx(lm[454]);
+                const top = mx(lm[10]), bottom = mx(lm[152]);
+                const eyeL = mx(lm[33]), eyeR = mx(lm[263]);
 
-                    // 計算 3D 空間嘅真實可視闊高
-                    const frustumHeight = 2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-                    const frustumWidth = frustumHeight * aspect;
-                    
-                    const targetX = (nose.x - 0.5) * frustumWidth;
-                    const targetY = -(nose.y - 0.5) * frustumHeight;
-                    
-                    // 【修正 2】用面闊計算真實 Z 軸深度，等透視相機自動處理近大遠細
-                    const faceWidth = Math.sqrt(Math.pow(rightCheek.x - leftCheek.x, 2) + Math.pow(rightCheek.y - leftCheek.y, 2));
-                    const clampedFaceWidth = Math.max(0.1, faceWidth);
-                    const refFaceWidth = 0.35; // 微調參數：正常距離下畫面中臉部佔比
-                    const currentDistance = camera.position.z * (refFaceWidth / clampedFaceWidth);
-                    const targetZ = camera.position.z - currentDistance;
-                    
-                    particleSystem.position.x += (targetX - particleSystem.position.x) * 0.4;
-                    particleSystem.position.y += (targetY - particleSystem.position.y) * 0.4;
-                    particleSystem.position.z += (targetZ - particleSystem.position.z) * 0.4;
-                    
-                    // 固定 3D 比例，等 Z 軸深度變化自然帶動縮放
-                    const baseScale = 12.0; // 微調參數：根據你個 .glb 檔案嘅實際大細調整
-                    particleSystem.scale.set(baseScale, baseScale, baseScale);
+                // 【核心修正 2】固定 Z 軸，用 2D 面闊控制 Scale (徹底杜絕雜訊爆炸)
+                const targetX = (nose.x - 0.5) * 30.0 * aspect;
+                const targetY = -(nose.y - 0.5) * 30.0;
+                const targetZ = 0; // 固定喺原點，等相機自然透視
+                
+                const faceWidth = Math.hypot(rightCheek.x - leftCheek.x, rightCheek.y - leftCheek.y);
+                const targetScale = faceWidth * 40.0; // 【微調參數 A】面具大細基數
 
-                    const pitch = Math.atan2(bottom.z - top.z, bottom.y - top.y);
-                    const yaw = Math.atan2(rightCheek.z - leftCheek.z, rightCheek.x - leftCheek.x);
-                    const roll = Math.atan2(rightCheek.y - leftCheek.y, rightCheek.x - leftCheek.x); // 修正咗原本 left.x 嘅 typo
+                // 【核心修正 3】純 2D 幾何旋轉 (極度穩定，唔會抖動)
+                const roll = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x); // 歪頭
+                const cheekCenterX = (leftCheek.x + rightCheek.x) / 2;
+                const yaw = (nose.x - cheekCenterX) * 4.0; // 搖頭
+                const faceCenterY = (top.y + bottom.y) / 2;
+                const pitch = (nose.y - faceCenterY) * 4.0; // 點頭
 
-                    particleSystem.rotation.x += (-pitch - particleSystem.rotation.x) * 0.4;
-                    particleSystem.rotation.y += (yaw - particleSystem.rotation.y) * 0.4;
-                    particleSystem.rotation.z += (-roll - particleSystem.rotation.z) * 0.4;
-                }
+                // 平滑插值 (Lerp)
+                particleSystem.position.x += (targetX - particleSystem.position.x) * 0.3;
+                particleSystem.position.y += (targetY - particleSystem.position.y) * 0.3;
+                particleSystem.position.z += (targetZ - particleSystem.position.z) * 0.3;
+                
+                const newScale = particleSystem.scale.x + (targetScale - particleSystem.scale.x) * 0.3;
+                particleSystem.scale.set(newScale, newScale, newScale);
+
+                particleSystem.rotation.x += (pitch - particleSystem.rotation.x) * 0.3;
+                particleSystem.rotation.y += (-yaw - particleSystem.rotation.y) * 0.3;
+                particleSystem.rotation.z += (roll - particleSystem.rotation.z) * 0.3;
             });
 
             const selfieSegmentation = new window.SelfieSegmentation({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`});
@@ -208,30 +180,31 @@
                 canvasCtx.save();
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-                // 【修正 3】先畫模糊背景
+                // 【核心修正 4】手動鏡像 2D 繪製，確保背景同人物符合照鏡習慣
+                canvasCtx.scale(-1, 1);
+                canvasCtx.translate(-canvasElement.width, 0);
+
+                // 1. 模糊背景
                 canvasCtx.filter = 'blur(15px) brightness(0.85)';
                 canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
                 canvasCtx.filter = 'none';
 
-                // 用離屏 Canvas 摳出清晰嘅人物主體
+                // 2. 離屏摳出清晰人物
                 if (!window._fgCanvas) {
                     window._fgCanvas = document.createElement('canvas');
                     window._fgCtx = window._fgCanvas.getContext('2d');
                 }
-                const fgCanvas = window._fgCanvas;
-                const fgCtx = window._fgCtx;
-                if (fgCanvas.width !== canvasElement.width) {
-                    fgCanvas.width = canvasElement.width; fgCanvas.height = canvasElement.height;
-                }
-
-                fgCtx.clearRect(0, 0, fgCanvas.width, fgCanvas.height);
-                fgCtx.drawImage(results.image, 0, 0, fgCanvas.width, fgCanvas.height);
+                const fg = window._fgCanvas, fgCtx = window._fgCtx;
+                if (fg.width !== canvasElement.width) { fg.width = canvasElement.width; fg.height = canvasElement.height; }
+                
+                fgCtx.clearRect(0, 0, fg.width, fg.height);
+                fgCtx.drawImage(results.image, 0, 0, fg.width, fg.height);
                 fgCtx.globalCompositeOperation = 'destination-in';
-                fgCtx.drawImage(results.segmentationMask, 0, 0, fgCanvas.width, fgCanvas.height);
+                fgCtx.drawImage(results.segmentationMask, 0, 0, fg.width, fg.height);
                 fgCtx.globalCompositeOperation = 'source-over';
 
-                // 將清晰人物疊加喺模糊背景上
-                canvasCtx.drawImage(fgCanvas, 0, 0);
+                // 3. 疊加清晰人物
+                canvasCtx.drawImage(fg, 0, 0);
                 canvasCtx.restore();
             });
 
@@ -242,7 +215,6 @@
                 },
                 width: 1280, height: 720
             });
-            
             cameraUtils.start().then(() => {
                 statusElement.innerText = "SYSTEM ACTIVE // 動態縮放、景深與追蹤已啟動";
                 setTimeout(() => { statusElement.style.opacity = '0'; }, 3000);
