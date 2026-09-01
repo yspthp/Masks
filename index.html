@@ -41,10 +41,14 @@
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
         /* ================= 使用者可調參數 ================= */
-        const SCALE_FACTOR = 8.0;      // 【大小】面具整體縮放倍數（太細就加大）
-        const MASK_Y_OFFSET = 0.06;    // 【垂直微調】正數＝向上移，負數＝向下移
-        const ROTATION_AMP  = 2.5;     // 【轉頭幅度】搖頭／點頭靈敏度
-        const LERP_SPEED    = 0.3;     // 【平滑度】跟隨速度 (0~1)
+        const SCALE_FACTOR = 8.0;      // 【大小】太細就加大
+        const MASK_Y_OFFSET = 0.10;    // 【垂直微調】正數＝向上移
+        const ROTATION_AMP  = 1.0;     // 【轉頭幅度】改為 1:1 跟隨，唔再過度放大
+        const LERP_SPEED    = 0.3;     // 【平滑度】
+        const STRETCH_COMPENSATION = true; // 【比例補償開關】false = 關閉
+        // 【模型固有朝向補正】你個 GLB 自帶 90° 誤差，呢度補返
+        // 如果正視時面具仍然橫放／倒轉，就順序試：+Math.PI/2、Math.PI、0
+        const MODEL_PITCH_OFFSET = -Math.PI / 2;
 
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
@@ -69,7 +73,6 @@
         container.appendChild(renderer.domElement);
         resizeCanvas();
 
-        // 用 Group 分離「模型自身姿勢」與「動態追蹤」
         const maskGroup = new THREE.Group();
         scene.add(maskGroup);
 
@@ -104,7 +107,7 @@
                 uvs[i * 2 + 1] = tempUv.y;
             }
 
-            /* ===== 自動校準：唔再依賴 GLB 自身嘅原點同大細 ===== */
+            /* ===== 自動校準：居中 + 歸一化 ===== */
             let minX = Infinity, minY = Infinity, minZ = Infinity;
             let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
             for (let i = 0; i < positions.length; i += 3) {
@@ -114,7 +117,7 @@
             }
             const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
             const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1;
-            const norm = 10 / maxDim;   // 將模型最長邊歸一化做 10 個單位
+            const norm = 10 / maxDim;
 
             for (let i = 0; i < positions.length; i += 3) {
                 positions[i]     = (positions[i]     - cx) * norm;
@@ -151,8 +154,8 @@
 
             particleSystem = new THREE.Points(geometry, material);
 
-            // 萬一你個模型天生倒置，先取消下面註解（正常情況唔使開）：
-            // particleSystem.rotation.x = Math.PI;
+            // 【關鍵修正】補償模型自帶嘅 90° 朝向誤差
+            particleSystem.rotation.x = MODEL_PITCH_OFFSET;
 
             maskGroup.add(particleSystem);
             statusElement.innerText = "WAITING // 等待攝像頭權限授權...";
@@ -168,44 +171,39 @@
                 const lm = results.multiFaceLandmarks[0];
                 const aspect = window.innerWidth / window.innerHeight;
 
-                // 鏡像 X 座標，匹配鏡像後嘅畫面
                 const mx = (pt) => ({ x: 1.0 - pt.x, y: pt.y });
                 const nose = mx(lm[1]);
-                const eyeL = mx(lm[33]);   // 用戶左眼
-                const eyeR = mx(lm[263]);  // 用戶右眼
+                const eyeL = mx(lm[33]);
+                const eyeR = mx(lm[263]);
 
                 // 1. 位置
                 const targetX = (nose.x - 0.5) * 30.0 * aspect;
                 const targetY = -(nose.y - 0.5 - MASK_Y_OFFSET) * 30.0;
                 const targetZ = 0;
 
-                // 2. 大小（雙眼距離做基準）
+                // 2. 大小
                 const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
                 const targetScale = eyeDist * SCALE_FACTOR;
 
-                // 3. 旋轉（雙眼中心做基準）
+                // 3. 旋轉（1:1 跟隨，唔再放大）
                 const eyeCenterX = (eyeL.x + eyeR.x) / 2;
                 const eyeCenterY = (eyeL.y + eyeR.y) / 2;
                 const roll  = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x);
                 const yaw   = ((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;
                 const pitch = ((nose.y - eyeCenterY) / eyeDist) * ROTATION_AMP;
 
-                // 位置平滑插值
                 maskGroup.position.x += (targetX - maskGroup.position.x) * LERP_SPEED;
                 maskGroup.position.y += (targetY - maskGroup.position.y) * LERP_SPEED;
                 maskGroup.position.z += (targetZ - maskGroup.position.z) * LERP_SPEED;
 
-                // 【修正扁平問題】視頻被拉伸填滿視窗，但 3D 冇被拉伸，
-                // 所以將同一個拉伸比例套落面具 Y 軸，令兩者變形互相抵消
                 const videoAspect = (videoElement.videoWidth && videoElement.videoHeight)
                     ? videoElement.videoWidth / videoElement.videoHeight
                     : (16 / 9);
-                const stretch = videoAspect / aspect;
+                const stretch = STRETCH_COMPENSATION ? (videoAspect / aspect) : 1.0;
 
                 const newScale = maskGroup.scale.x + (targetScale - maskGroup.scale.x) * LERP_SPEED;
                 maskGroup.scale.set(newScale, newScale * stretch, newScale);
 
-                // 角度歸一化插值（防止跨 ±180° 時 360 度亂轉）
                 let dRoll = roll - maskGroup.rotation.z;
                 maskGroup.rotation.z += Math.atan2(Math.sin(dRoll), Math.cos(dRoll)) * LERP_SPEED;
 
@@ -223,16 +221,13 @@
                 canvasCtx.save();
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-                // 手動鏡像 2D 繪製
                 canvasCtx.scale(-1, 1);
                 canvasCtx.translate(-canvasElement.width, 0);
 
-                // 1. 模糊背景
                 canvasCtx.filter = 'blur(15px) brightness(0.85)';
                 canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
                 canvasCtx.filter = 'none';
 
-                // 2. 用離屏 Canvas 摳出清晰人物
                 if (!window._fgCanvas) {
                     window._fgCanvas = document.createElement('canvas');
                     window._fgCtx = window._fgCanvas.getContext('2d');
@@ -249,7 +244,6 @@
                 fgCtx.drawImage(results.segmentationMask, 0, 0, fg.width, fg.height);
                 fgCtx.globalCompositeOperation = 'source-over';
 
-                // 3. 清晰人物疊加喺模糊背景之上
                 canvasCtx.drawImage(fg, 0, 0);
                 canvasCtx.restore();
             });
