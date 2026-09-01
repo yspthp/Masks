@@ -7,21 +7,9 @@
     <style>
         body { margin: 0; background-color: #050508; overflow: hidden; color: white; font-family: sans-serif; }
         #input_video { display: none; }
-        
-        /* 【修正】移除所有 scaleX(-1)，改由 JS 內部統一處理鏡像，防止座標系撕裂 */
-        #output_canvas { 
-            position: absolute; top: 0; left: 0; 
-            width: 100vw; height: 100vh; object-fit: cover; z-index: -1; 
-        }
-        #webgl-container { 
-            position: absolute; top: 0; left: 0; 
-            width: 100vw; height: 100vh; z-index: 1; pointer-events: none; 
-        }
-        #status { 
-            position: absolute; top: 20px; left: 20px; padding: 10px; 
-            background: rgba(0,0,0,0.6); border-left: 3px solid #00ffcc; 
-            font-size: 14px; letter-spacing: 1px; z-index: 10; backdrop-filter: blur(5px); 
-        }
+        #output_canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: -1; }
+        #webgl-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; pointer-events: none; }
+        #status { position: absolute; top: 20px; left: 20px; padding: 10px; background: rgba(0,0,0,0.6); border-left: 3px solid #00ffcc; font-size: 14px; letter-spacing: 1px; z-index: 10; backdrop-filter: blur(5px); }
     </style>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -43,6 +31,11 @@
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
+        /* ================= 使用者可調參數 ================= */
+        const SCALE_FACTOR = 6.0;      // 【大小】你提到改成 6，呢度預設為 6.0
+        const ROTATION_AMP = 2.5;      // 【轉頭幅度】搖頭/點頭嘅靈敏度
+        const LERP_SPEED   = 0.3;      // 【平滑度】跟隨速度 (0~1)
+
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
@@ -60,13 +53,16 @@
 
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.z = 25; // 相機固定喺安全距離
+        camera.position.z = 25;
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         container.appendChild(renderer.domElement);
         resizeCanvas();
 
-        let particleSystem = null;
+        // 【核心修正 1】引入 Group 分離「模型初始姿勢」同「動態追蹤」
+        const maskGroup = new THREE.Group();
+        scene.add(maskGroup);
+
         const clock = new THREE.Clock();
         const loader = new GLTFLoader();
         
@@ -122,8 +118,17 @@
                 transparent: true, blending: THREE.NormalBlending, depthWrite: false
             });
 
-            particleSystem = new THREE.Points(geometry, material);
-            scene.add(particleSystem);
+            const particleSystem = new THREE.Points(geometry, material);
+            
+            // 【核心修正 2】修正上下顛倒問題
+            // 如果模型上下顛倒，通常係因為 Blender 導出時 Z 軸同 Three.js 嘅 Y 軸唔夾
+            // 呢度強制將模型本身繞 X 軸翻轉 180 度 (Math.PI)
+            particleSystem.rotation.x = Math.PI; 
+            
+            // 如果翻轉後發現係「左右反轉」或者「訓低咗」，可以嘗試改做：
+            // particleSystem.rotation.z = Math.PI; 或 particleSystem.rotation.y = Math.PI;
+            
+            maskGroup.add(particleSystem);
             statusElement.innerText = "WAITING // 等待攝像頭權限授權...";
             initAIEngines();
         });
@@ -133,44 +138,51 @@
             faceMesh.setOptions({ maxNumFaces: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
             
             faceMesh.onResults((results) => {
-                if (!particleSystem || !results.multiFaceLandmarks?.length) return;
+                if (!results.multiFaceLandmarks?.length) return;
                 const lm = results.multiFaceLandmarks[0];
                 const aspect = window.innerWidth / window.innerHeight;
                 
-                // 【核心修正 1】鏡像 X 座標，匹配前置鏡頭嘅視覺習慣
+                // 鏡像 X 座標
                 const mx = (pt) => ({ x: 1.0 - pt.x, y: pt.y });
                 const nose = mx(lm[1]);
-                const leftCheek = mx(lm[234]);
-                const rightCheek = mx(lm[454]);
-                const top = mx(lm[10]), bottom = mx(lm[152]);
-                const eyeL = mx(lm[33]), eyeR = mx(lm[263]);
-
-                // 【核心修正 2】固定 Z 軸，用 2D 面闊控制 Scale (徹底杜絕雜訊爆炸)
+                const eyeL = mx(lm[33]); // 用戶左眼
+                const eyeR = mx(lm[263]); // 用戶右眼
+                
+                // 1. 位置 (X, Y)
                 const targetX = (nose.x - 0.5) * 30.0 * aspect;
                 const targetY = -(nose.y - 0.5) * 30.0;
-                const targetZ = 0; // 固定喺原點，等相機自然透視
+                const targetZ = 0; 
                 
-                const faceWidth = Math.hypot(rightCheek.x - leftCheek.x, rightCheek.y - leftCheek.y);
-                const targetScale = faceWidth * 10.0; // 【微調參數 A】面具大細基數
+                // 2. 大小 (使用雙眼距離做基準，比臉頰更穩定)
+                const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
+                const targetScale = eyeDist * SCALE_FACTOR; 
 
-                // 【核心修正 3】純 2D 幾何旋轉 (極度穩定，唔會抖動)
+                // 3. 旋轉 (使用雙眼中心做基準)
+                const eyeCenterX = (eyeL.x + eyeR.x) / 2;
+                const eyeCenterY = (eyeL.y + eyeR.y) / 2;
+                
                 const roll = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x); // 歪頭
-                const cheekCenterX = (leftCheek.x + rightCheek.x) / 2;
-                const yaw = (nose.x - cheekCenterX) * 4.0; // 搖頭
-                const faceCenterY = (top.y + bottom.y) / 2;
-                const pitch = (nose.y - faceCenterY) * 4.0; // 點頭
+                const yaw = ((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP; // 搖頭
+                const pitch = ((nose.y - eyeCenterY) / eyeDist) * ROTATION_AMP; // 點頭
 
-                // 平滑插值 (Lerp)
-                particleSystem.position.x += (targetX - particleSystem.position.x) * 0.3;
-                particleSystem.position.y += (targetY - particleSystem.position.y) * 0.3;
-                particleSystem.position.z += (targetZ - particleSystem.position.z) * 0.3;
+                // 【核心修正 3】位置同大小嘅平滑插值 (Lerp)
+                maskGroup.position.x += (targetX - maskGroup.position.x) * LERP_SPEED;
+                maskGroup.position.y += (targetY - maskGroup.position.y) * LERP_SPEED;
+                maskGroup.position.z += (targetZ - maskGroup.position.z) * LERP_SPEED;
                 
-                const newScale = particleSystem.scale.x + (targetScale - particleSystem.scale.x) * 0.3;
-                particleSystem.scale.set(newScale, newScale, newScale);
+                const newScale = maskGroup.scale.x + (targetScale - maskGroup.scale.x) * LERP_SPEED;
+                maskGroup.scale.set(newScale, newScale, newScale);
 
-                particleSystem.rotation.x += (pitch - particleSystem.rotation.x) * 0.3;
-                particleSystem.rotation.y += (-yaw - particleSystem.rotation.y) * 0.3;
-                particleSystem.rotation.z += (roll - particleSystem.rotation.z) * 0.3;
+                // 【核心修正 4】完美角度歸一化 (徹底解決 360 度翻滾同瘋狂旋轉)
+                // 當角度由 179度 跳去 -179度 時，Math.atan2(Math.sin(d), Math.cos(d)) 會確保佢行最短路線 (2度)，而唔係轉 358度
+                let dRoll = roll - maskGroup.rotation.z;
+                maskGroup.rotation.z += Math.atan2(Math.sin(dRoll), Math.cos(dRoll)) * LERP_SPEED;
+                
+                let dYaw = -yaw - maskGroup.rotation.y; 
+                maskGroup.rotation.y += Math.atan2(Math.sin(dYaw), Math.cos(dYaw)) * LERP_SPEED;
+                
+                let dPitch = pitch - maskGroup.rotation.x; 
+                maskGroup.rotation.x += Math.atan2(Math.sin(dPitch), Math.cos(dPitch)) * LERP_SPEED;
             });
 
             const selfieSegmentation = new window.SelfieSegmentation({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`});
@@ -180,7 +192,7 @@
                 canvasCtx.save();
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-                // 【核心修正 4】手動鏡像 2D 繪製，確保背景同人物符合照鏡習慣
+                // 手動鏡像 2D 繪製
                 canvasCtx.scale(-1, 1);
                 canvasCtx.translate(-canvasElement.width, 0);
 
@@ -223,7 +235,7 @@
 
         function animate() {
             requestAnimationFrame(animate);
-            if (particleSystem) particleSystem.material.uniforms.uTime.value = clock.getElapsedTime();
+            if (maskGroup.children[0]) maskGroup.children[0].material.uniforms.uTime.value = clock.getElapsedTime();
             renderer.render(scene, camera);
         }
         animate();
