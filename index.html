@@ -41,7 +41,7 @@
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
         /* ================= 使用者可調參數 ================= */
-        const SCALE_FACTOR = 6.0;      // 【大小】面具整體縮放倍數
+        const SCALE_FACTOR = 8.0;      // 【大小】面具整體縮放倍數（太細就加大）
         const MASK_Y_OFFSET = 0.06;    // 【垂直微調】正數＝向上移，負數＝向下移
         const ROTATION_AMP  = 2.5;     // 【轉頭幅度】搖頭／點頭靈敏度
         const LERP_SPEED    = 0.3;     // 【平滑度】跟隨速度 (0~1)
@@ -151,8 +151,7 @@
 
             particleSystem = new THREE.Points(geometry, material);
 
-            // 注意：呢度故意冇加 rotation.x = Math.PI（之前嘅翻轉就係令面具
-            // 上下顛倒＋跌去鼻下面嘅元兇）。萬一你個模型天生倒置，先取消下面註解：
+            // 萬一你個模型天生倒置，先取消下面註解（正常情況唔使開）：
             // particleSystem.rotation.x = Math.PI;
 
             maskGroup.add(particleSystem);
@@ -175,31 +174,38 @@
                 const eyeL = mx(lm[33]);   // 用戶左眼
                 const eyeR = mx(lm[263]);  // 用戶右眼
 
-                // 1. 位置（MASK_Y_OFFSET 用於垂直微調）
+                // 1. 位置
                 const targetX = (nose.x - 0.5) * 30.0 * aspect;
                 const targetY = -(nose.y - 0.5 - MASK_Y_OFFSET) * 30.0;
                 const targetZ = 0;
 
-                // 2. 大小（雙眼距離做基準，配合自動校準後意義統一）
+                // 2. 大小（雙眼距離做基準）
                 const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
                 const targetScale = eyeDist * SCALE_FACTOR;
 
                 // 3. 旋轉（雙眼中心做基準）
                 const eyeCenterX = (eyeL.x + eyeR.x) / 2;
                 const eyeCenterY = (eyeL.y + eyeR.y) / 2;
-                const roll  = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x);              // 歪頭
-                const yaw   = ((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;           // 搖頭
-                const pitch = ((nose.y - eyeCenterY) / eyeDist) * ROTATION_AMP;           // 點頭
+                const roll  = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x);
+                const yaw   = ((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;
+                const pitch = ((nose.y - eyeCenterY) / eyeDist) * ROTATION_AMP;
 
-                // 位置與大小嘅平滑插值
+                // 位置平滑插值
                 maskGroup.position.x += (targetX - maskGroup.position.x) * LERP_SPEED;
                 maskGroup.position.y += (targetY - maskGroup.position.y) * LERP_SPEED;
                 maskGroup.position.z += (targetZ - maskGroup.position.z) * LERP_SPEED;
 
-                const newScale = maskGroup.scale.x + (targetScale - maskGroup.scale.x) * LERP_SPEED;
-                maskGroup.scale.set(newScale, newScale, newScale);
+                // 【修正扁平問題】視頻被拉伸填滿視窗，但 3D 冇被拉伸，
+                // 所以將同一個拉伸比例套落面具 Y 軸，令兩者變形互相抵消
+                const videoAspect = (videoElement.videoWidth && videoElement.videoHeight)
+                    ? videoElement.videoWidth / videoElement.videoHeight
+                    : (16 / 9);
+                const stretch = videoAspect / aspect;
 
-                // 角度歸一化插值（徹底解決跨 ±180° 時嘅 360 度亂轉）
+                const newScale = maskGroup.scale.x + (targetScale - maskGroup.scale.x) * LERP_SPEED;
+                maskGroup.scale.set(newScale, newScale * stretch, newScale);
+
+                // 角度歸一化插值（防止跨 ±180° 時 360 度亂轉）
                 let dRoll = roll - maskGroup.rotation.z;
                 maskGroup.rotation.z += Math.atan2(Math.sin(dRoll), Math.cos(dRoll)) * LERP_SPEED;
 
