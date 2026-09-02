@@ -7,7 +7,6 @@
     <style>
         body { margin: 0; background-color: #050508; overflow: hidden; color: white; font-family: sans-serif; }
         #input_video { display: none; }
-        /* 注意：呢度刻意沒有任何 transform，鏡像由 JS 統一處理 */
         #output_canvas {
             position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
             object-fit: cover; z-index: -1;
@@ -47,10 +46,8 @@
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
-        /* ================= 顯示鏡像開關 =================
-           true  = 鏡面自拍感（視頻同 3D 同時翻轉，保證一致）
-           false = 原始鏡頭視圖                              */
-        const MIRROR_DISPLAY = false;
+        /* ================= 顯示鏡像開關 ================= */
+        const MIRROR_DISPLAY = true;
 
         /* ================= 面具清單 ================= */
         const MODEL_FILES = [
@@ -63,11 +60,11 @@
 
         /* ============ 每模型獨立設定 ============ */
         const MODEL_OVERRIDES = {
-            './model.glb':  { count: 66000 },                                                       // 貓頭鷹
-            './model2.glb': { count: 150000, pointSize: 1.6, noiseAmp: 0.35, scaleMul: 1.2 },       // 刺蝟
-            './model3.glb': { scaleMul: 1.2, count: 100000 },                                       // 獅子
-            './model4.glb': { scaleMul: 1.35, yOffset: 0.19, count: 72600 },                        // 兔子
-            './model5.glb': { count: 72000, pointSize: 1.3, noiseAmp: 0.5, scaleMul: 1.1 },         // 倉鼠
+            './model.glb':  { count: 66000 },
+            './model2.glb': { count: 150000, pointSize: 1.6, noiseAmp: 0.35, scaleMul: 1.2 },
+            './model3.glb': { scaleMul: 1.2, count: 100000 },
+            './model4.glb': { scaleMul: 1.35, yOffset: 0.19, count: 72600 },
+            './model5.glb': { count: 72000, pointSize: 1.3, noiseAmp: 0.5, scaleMul: 1.1 },
         };
 
         /* ================= 全域參數 ================= */
@@ -80,9 +77,13 @@
         const ROTATION_AMP  = 0.8;
         const LERP_SPEED    = 0.3;
         const STRETCH_COMPENSATION = true;
-        const MODEL_PITCH_OFFSET = THREE.MathUtils.degToRad(180);
         const MODEL_YAW_OFFSET   = THREE.MathUtils.degToRad(0);
         const MODEL_ROLL_OFFSET  = THREE.MathUtils.degToRad(0);
+
+        /* 【新】俯仰補正：默認 0°，撳 P 即時循環切換 */
+        const PITCH_OPTIONS = [0, 180, 90, 270];
+        let pitchOptionIndex = 0;
+        let modelPitchOffset = THREE.MathUtils.degToRad(PITCH_OPTIONS[0]);
 
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
@@ -90,16 +91,22 @@
         const statusElement = document.getElementById('status');
         const container = document.getElementById('webgl-container');
 
-        /* ===== 俯仰基線校準 ===== */
+        /* ===== 校準鍵 ===== */
         let pitchBaseline = null;
         let baselineCount = 0;
         const BASELINE_FRAMES = 45;
         let recalibrate = false;
         window.addEventListener('keydown', (e) => {
             if (e.key === 'r' || e.key === 'R') recalibrate = true;
+            if (e.key === 'p' || e.key === 'P') {
+                pitchOptionIndex = (pitchOptionIndex + 1) % PITCH_OPTIONS.length;
+                modelPitchOffset = THREE.MathUtils.degToRad(PITCH_OPTIONS[pitchOptionIndex]);
+                statusElement.style.opacity = '1';
+                statusElement.innerText = `PITCH OFFSET: ${PITCH_OPTIONS[pitchOptionIndex]}°（撳 P 切換）`;
+            }
         });
 
-        /* ===== 多人 face 選擇（原始座標） ===== */
+        /* ===== 多人 face 選擇 ===== */
         let trackedNose = null;
         function pickFace(faces) {
             let largest = null, largestSize = 0;
@@ -138,7 +145,6 @@
         container.appendChild(renderer.domElement);
         resizeCanvas();
 
-        /* 【關鍵】鏡像由 JS 一次性套用喺兩個圖層，永遠一致 */
         if (MIRROR_DISPLAY) {
             canvasElement.style.transform = 'scaleX(-1)';
             renderer.domElement.style.transform = 'scaleX(-1)';
@@ -156,7 +162,6 @@
         let transition = null;
         let lastFormedTime = 0;
 
-        /* ===== 建立粒子資產 ===== */
         function buildAsset(gltf, cfg) {
             let targetMesh = null, targetTexture = null;
             gltf.scene.traverse((child) => {
@@ -306,7 +311,6 @@
                 const lm = pickFace(results.multiFaceLandmarks);
                 const aspect = window.innerWidth / window.innerHeight;
 
-                // 統一原始座標，不做任何翻轉
                 const nose = lm[1];
                 const eyeL = lm[33];
                 const eyeR = lm[263];
@@ -341,7 +345,7 @@
                 const dynamicYaw   = ((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;
                 const dynamicRoll  = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x);
 
-                const targetPitch = dynamicPitch + MODEL_PITCH_OFFSET;
+                const targetPitch = dynamicPitch + modelPitchOffset;
                 const targetYaw   = dynamicYaw   + MODEL_YAW_OFFSET;
                 const targetRoll  = dynamicRoll  + MODEL_ROLL_OFFSET;
 
@@ -369,7 +373,6 @@
             selfieSegmentation.setOptions({ modelSelection: 1 });
 
             selfieSegmentation.onResults((results) => {
-                // 原始繪製，不做鏡像（鏡像由 CSS transform 統一處理）
                 canvasCtx.save();
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
@@ -406,8 +409,8 @@
             });
 
             cameraUtils.start().then(() => {
-                statusElement.innerText = "SYSTEM ACTIVE // 撳 R 校準平視";
-                setTimeout(() => { statusElement.style.opacity = '0'; }, 4000);
+                statusElement.innerText = "SYSTEM ACTIVE // P＝切換俯仰角度、R＝校準平視";
+                setTimeout(() => { statusElement.style.opacity = '0'; }, 5000);
             });
         }
 
