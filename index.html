@@ -40,19 +40,32 @@
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
-        /* ================= 使用者可調參數 ================= */
-        // 【面具清單】改做你嘅檔案名稱；得 1 個就唔會自動切換
+        /* ================= 面具清單 ================= */
         const MODEL_FILES = [
-            './model.glb',
-            './model2.glb',
-            './model3.glb',
-            './model4.glb',
-            './model5.glb'
+            './model.glb',    // 貓頭鷹
+            './model2.glb',   // 刺蝟
+            './model3.glb',   // 獅子
+            './model4.glb',   // 兔子
+            './model5.glb'    // 倉鼠
         ];
-        const SWITCH_INTERVAL = 8.0;   // 每隔幾秒切換
-        const DISSOLVE_OUT    = 0.8;   // 散開時間（秒）
-        const DISSOLVE_IN     = 1.0;   // 聚合時間（秒）
 
+        /* ============ 每模型獨立設定（key = 檔案名稱） ============
+           count     : 粒子數量（默認 60000；越高越實）
+           pointSize : 粒子大小倍率（默認 1.0）
+           noiseAmp  : 粒子漂浮幅度（默認 1.0；調細＝更實更銳利）
+           scaleMul  : 整體大小倍率
+           yOffset   : 垂直偏移覆寫（正數＝向上）                       */
+        const MODEL_OVERRIDES = {
+            './model2.glb': { count: 150000, pointSize: 1.6, noiseAmp: 0.35 },  // 刺蝟
+            './model4.glb': { scaleMul: 1.8, yOffset: 0.24 },                   // 兔子
+            './model5.glb': { count: 150000, pointSize: 1.6, noiseAmp: 0.35 },  // 倉鼠
+        };
+
+        /* ================= 全域參數 ================= */
+        const DEFAULT_PARTICLE_COUNT = 60000;
+        const SWITCH_INTERVAL = 8.0;
+        const DISSOLVE_OUT    = 0.8;
+        const DISSOLVE_IN     = 1.0;
         const SCALE_FACTOR = 12.0;
         const MASK_Y_OFFSET = 0.10;
         const ROTATION_AMP  = 0.8;
@@ -123,14 +136,13 @@
         const clock = new THREE.Clock();
         const loader = new GLTFLoader();
 
-        /* ===== 融解切換狀態 ===== */
         let maskAssets = [];
         let currentIndex = 0;
         let transition = null;
         let lastFormedTime = 0;
 
-        /* ===== 由 GLTF 建立粒子資產 ===== */
-        function buildAsset(gltf) {
+        /* ===== 建立粒子資產 ===== */
+        function buildAsset(gltf, cfg) {
             let targetMesh = null, targetTexture = null;
             gltf.scene.traverse((child) => {
                 if (child.isMesh && !targetMesh) {
@@ -141,7 +153,7 @@
             if (!targetMesh) return null;
 
             const sampler = new MeshSurfaceSampler(targetMesh).build();
-            const particleCount = 60000;
+            const particleCount = cfg.count || DEFAULT_PARTICLE_COUNT;
             const geometry = new THREE.BufferGeometry();
             const positions = new Float32Array(particleCount * 3);
             const uvs = new Float32Array(particleCount * 2);
@@ -158,7 +170,6 @@
                 randoms[i] = Math.random();
             }
 
-            /* 自動校準：居中 + 歸一化 */
             let minX = Infinity, minY = Infinity, minZ = Infinity;
             let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
             for (let i = 0; i < positions.length; i += 3) {
@@ -179,30 +190,33 @@
             geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
             geometry.setAttribute('aRandom', new THREE.BufferAttribute(randoms, 1));
 
-            return { geometry, texture: targetTexture };
+            return { geometry, texture: targetTexture, cfg };
         }
 
-        function createMaterial(texture) {
+        function createMaterial(texture, cfg) {
             return new THREE.ShaderMaterial({
                 uniforms: {
                     uTime: { value: 0.0 },
                     uTexture: { value: texture },
-                    uDissolve: { value: 0.0 }   // 0 = 完整, 1 = 完全散開
+                    uDissolve: { value: 0.0 },
+                    uPointSize: { value: cfg.pointSize ?? 1.0 },
+                    uNoiseAmp: { value: cfg.noiseAmp ?? 1.0 }
                 },
                 vertexShader: `
                     uniform float uTime;
                     uniform float uDissolve;
+                    uniform float uPointSize;
+                    uniform float uNoiseAmp;
                     attribute float aRandom;
                     varying vec2 vUv;
                     varying float vAlpha;
                     void main() {
                         vUv = uv;
                         vec3 pos = position;
-                        pos.x += sin(pos.y * 2.0 + uTime * 2.0) * 0.2;
-                        pos.y += cos(pos.x * 2.0 + uTime * 2.5) * 0.2;
-                        pos.z += sin(pos.x * 2.0 + pos.y * 2.0 + uTime * 3.0) * 0.3;
+                        pos.x += sin(pos.y * 2.0 + uTime * 2.0) * 0.2 * uNoiseAmp;
+                        pos.y += cos(pos.x * 2.0 + uTime * 2.5) * 0.2 * uNoiseAmp;
+                        pos.z += sin(pos.x * 2.0 + pos.y * 2.0 + uTime * 3.0) * 0.3 * uNoiseAmp;
 
-                        // 融解：每顆粒子錯開時間散飛
                         float local = clamp(uDissolve * 1.5 - aRandom * 0.5, 0.0, 1.0);
                         float ease = local * local * (3.0 - 2.0 * local);
                         vec3 scatterDir = normalize(position + vec3(
@@ -214,7 +228,7 @@
                         vAlpha = 1.0 - ease;
 
                         vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                        gl_PointSize = (12.0 + sin(uTime * 4.0 + pos.x)*3.0) * (5.0 / -mvPosition.z);
+                        gl_PointSize = uPointSize * (12.0 + sin(uTime * 4.0 + pos.x)*3.0) * (5.0 / -mvPosition.z);
                         gl_Position = projectionMatrix * mvPosition;
                     }`,
                 fragmentShader: `
@@ -233,13 +247,13 @@
             });
         }
 
-        /* ===== 預載所有面具 ===== */
         async function loadAllMasks() {
             for (let i = 0; i < MODEL_FILES.length; i++) {
                 statusElement.innerText = `LOADING // 載入面具模型 ${i + 1}/${MODEL_FILES.length}...`;
                 try {
                     const gltf = await loader.loadAsync(MODEL_FILES[i]);
-                    const asset = buildAsset(gltf);
+                    const cfg = MODEL_OVERRIDES[MODEL_FILES[i]] || {};
+                    const asset = buildAsset(gltf, cfg);
                     if (asset) maskAssets.push(asset);
                 } catch (e) {
                     console.warn(`SKIP // 無法載入 ${MODEL_FILES[i]}`);
@@ -250,15 +264,19 @@
 
         function applyAsset(i) {
             currentIndex = i;
-            particleSystem.geometry = maskAssets[i].geometry;
-            particleSystem.material.uniforms.uTexture.value = maskAssets[i].texture;
+            const a = maskAssets[i];
+            particleSystem.geometry = a.geometry;
+            const u = particleSystem.material.uniforms;
+            u.uTexture.value = a.texture;
+            u.uPointSize.value = a.cfg.pointSize ?? 1.0;
+            u.uNoiseAmp.value = a.cfg.noiseAmp ?? 1.0;
         }
 
-        /* ===== 啟動 ===== */
         (async () => {
             const ok = await loadAllMasks();
             if (!ok) { statusElement.innerText = "ERROR // 沒有任何有效模型"; return; }
-            particleSystem = new THREE.Points(maskAssets[0].geometry, createMaterial(maskAssets[0].texture));
+            particleSystem = new THREE.Points(maskAssets[0].geometry, createMaterial(maskAssets[0].texture, maskAssets[0].cfg));
+            applyAsset(0);
             maskGroup.add(particleSystem);
             statusElement.innerText = "WAITING // 等待攝像頭權限授權...";
             initAIEngines();
@@ -279,12 +297,16 @@
                 const eyeR = mx(lm[263]);
                 trackedNose = { x: nose.x, y: nose.y };
 
+                const cfg = maskAssets[currentIndex]?.cfg || {};
+                const scaleMul = cfg.scaleMul ?? 1.0;
+                const yOff = cfg.yOffset ?? MASK_Y_OFFSET;
+
                 const targetX = (nose.x - 0.5) * 30.0 * aspect;
-                const targetY = -(nose.y - 0.5 - MASK_Y_OFFSET) * 30.0;
+                const targetY = -(nose.y - 0.5 - yOff) * 30.0;
                 const targetZ = 0;
 
                 const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
-                const targetScale = eyeDist * SCALE_FACTOR;
+                const targetScale = eyeDist * SCALE_FACTOR * scaleMul;
 
                 const eyeCenterX = (eyeL.x + eyeR.x) / 2;
                 const eyeCenterY = (eyeL.y + eyeR.y) / 2;
@@ -376,7 +398,6 @@
             });
         }
 
-        /* ===== 主循環 + 融解切換狀態機 ===== */
         function animate() {
             requestAnimationFrame(animate);
             const t = clock.getElapsedTime();
@@ -393,7 +414,7 @@
                         const p = (t - transition.start) / DISSOLVE_OUT;
                         u.uDissolve.value = Math.min(p, 1);
                         if (p >= 1) {
-                            applyAsset(transition.next);   // 喺完全隱形嘅一刻交換
+                            applyAsset(transition.next);
                             transition = { phase: 'in', start: t };
                         }
                     } else {
