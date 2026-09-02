@@ -20,6 +20,21 @@
             background: rgba(0,0,0,0.6); border-left: 3px solid #00ffcc;
             font-size: 14px; letter-spacing: 1px; z-index: 10; backdrop-filter: blur(5px);
         }
+        /* ===== 即時調整 UI ===== */
+        #ui { position: fixed; bottom: 20px; right: 20px; z-index: 30; font-family: sans-serif; text-align: right; }
+        #uiToggle {
+            width: 46px; height: 46px; border-radius: 50%;
+            background: rgba(0,0,0,0.6); color: #00ffcc; border: 1px solid #00ffcc;
+            font-size: 20px; cursor: pointer; backdrop-filter: blur(5px);
+        }
+        #uiPanel {
+            display: none; margin-bottom: 10px; padding: 12px 14px;
+            background: rgba(0,0,0,0.65); border-left: 3px solid #00ffcc;
+            color: white; font-size: 13px; letter-spacing: 1px;
+            backdrop-filter: blur(5px); min-width: 220px; text-align: left;
+        }
+        #uiPanel.open { display: block; }
+        #uiPanel input[type=range] { width: 100%; margin-top: 8px; accent-color: #00ffcc; }
     </style>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -40,6 +55,15 @@
     <video id="input_video" playsinline></video>
     <canvas id="output_canvas"></canvas>
     <div id="webgl-container"></div>
+
+    <!-- ===== 即時大小調整 UI ===== -->
+    <div id="ui">
+        <div id="uiPanel">
+            面具大小：<span id="sizeVal">100%</span>
+            <input type="range" id="sizeSlider" min="0.5" max="2" step="0.05" />
+        </div>
+        <button id="uiToggle" title="調整面具大小">⚙</button>
+    </div>
 
     <script type="module">
         import * as THREE from 'three';
@@ -84,6 +108,22 @@
         const PITCH_OPTIONS = [0, 180, 90, 270];
         let pitchOptionIndex = 0;
         let modelPitchOffset = THREE.MathUtils.degToRad(PITCH_OPTIONS[0]);
+
+        /* ===== 【新】即時大小倍率（每裝置自動記憶） ===== */
+        let userSizeMul = 1.0;
+        try { userSizeMul = parseFloat(localStorage.getItem('maskSizeMul')) || 1.0; } catch (e) {}
+        const sizeSlider = document.getElementById('sizeSlider');
+        const sizeVal    = document.getElementById('sizeVal');
+        const uiPanel    = document.getElementById('uiPanel');
+        const uiToggle   = document.getElementById('uiToggle');
+        sizeSlider.value = userSizeMul;
+        sizeVal.textContent = Math.round(userSizeMul * 100) + '%';
+        sizeSlider.addEventListener('input', () => {
+            userSizeMul = parseFloat(sizeSlider.value);
+            sizeVal.textContent = Math.round(userSizeMul * 100) + '%';
+            try { localStorage.setItem('maskSizeMul', String(userSizeMul)); } catch (e) {}
+        });
+        uiToggle.addEventListener('click', () => uiPanel.classList.toggle('open'));
 
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
@@ -353,7 +393,8 @@
                 const base = pitchBaseline ?? rawRatio;
                 const stableEyeDist = faceH * (scaleRatioBaseline ?? ratioNow);
 
-                const targetScale = stableEyeDist * SCALE_FACTOR * scaleMul;
+                // 【新】乘上用戶即時調整嘅 userSizeMul
+                const targetScale = stableEyeDist * SCALE_FACTOR * scaleMul * userSizeMul;
 
                 const dynamicPitch = -(rawRatio - base) * ROTATION_AMP;
                 const dynamicYaw   = ((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;
@@ -423,7 +464,7 @@
             });
 
             cameraUtils.start().then(() => {
-                statusElement.innerText = "SYSTEM ACTIVE // P＝切換俯仰角度、R＝校準平視";
+                statusElement.innerText = "SYSTEM ACTIVE // ⚙ 調整大小、P 俯仰、R 校準";
                 setTimeout(() => { statusElement.style.opacity = '0'; }, 5000);
             });
         }
