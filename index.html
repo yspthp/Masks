@@ -41,12 +41,23 @@
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
         /* ================= 使用者可調參數 ================= */
-        const SCALE_FACTOR = 12.0;     // 【大小】唔夠大就加（14、16）
-        const MASK_Y_OFFSET = 0.10;    // 【垂直微調】正數＝向上移
-        const ROTATION_AMP  = 0.8;     // 【轉頭幅度】想完全凍結俯仰可設 0
+        // 【面具清單】改做你嘅檔案名稱；得 1 個就唔會自動切換
+        const MODEL_FILES = [
+            './model.glb',
+            './model2.glb',
+            './model3.glb',
+            './model4.glb',
+            './model5.glb'
+        ];
+        const SWITCH_INTERVAL = 8.0;   // 每隔幾秒切換
+        const DISSOLVE_OUT    = 0.8;   // 散開時間（秒）
+        const DISSOLVE_IN     = 1.0;   // 聚合時間（秒）
+
+        const SCALE_FACTOR = 12.0;
+        const MASK_Y_OFFSET = 0.10;
+        const ROTATION_AMP  = 0.8;
         const LERP_SPEED    = 0.3;
         const STRETCH_COMPENSATION = true;
-        // 【模型朝向補正】你試出 180 最啱，預設用佢；如仍微傾就試 160 / 200
         const MODEL_PITCH_OFFSET = THREE.MathUtils.degToRad(180);
         const MODEL_YAW_OFFSET   = THREE.MathUtils.degToRad(0);
         const MODEL_ROLL_OFFSET  = THREE.MathUtils.degToRad(0);
@@ -57,7 +68,7 @@
         const statusElement = document.getElementById('status');
         const container = document.getElementById('webgl-container');
 
-        /* ===== 俯仰基線校準（消除「鼻永遠喺眼下」嘅假訊號） ===== */
+        /* ===== 俯仰基線校準 ===== */
         let pitchBaseline = null;
         let baselineCount = 0;
         const BASELINE_FRAMES = 45;
@@ -65,6 +76,28 @@
         window.addEventListener('keydown', (e) => {
             if (e.key === 'r' || e.key === 'R') recalibrate = true;
         });
+
+        /* ===== 多人 face 選擇 ===== */
+        let trackedNose = null;
+        function pickFace(faces) {
+            let largest = null, largestSize = 0;
+            let nearest = null, nearestD = Infinity;
+            for (const f of faces) {
+                const size = Math.hypot(f[263].x - f[33].x, f[263].y - f[33].y);
+                if (size > largestSize) { largestSize = size; largest = f; }
+                if (trackedNose) {
+                    const d = Math.hypot((1 - f[1].x) - trackedNose.x, f[1].y - trackedNose.y);
+                    if (d < nearestD) { nearestD = d; nearest = f; }
+                }
+            }
+            if (!trackedNose) return largest;
+            if (nearest && nearestD < 0.2) {
+                const nSize = Math.hypot(nearest[263].x - nearest[33].x, nearest[263].y - nearest[33].y);
+                if (largest !== nearest && largestSize > nSize * 1.25) return largest;
+                return nearest;
+            }
+            return largest;
+        }
 
         function resizeCanvas() {
             canvasElement.width = window.innerWidth;
@@ -90,7 +123,14 @@
         const clock = new THREE.Clock();
         const loader = new GLTFLoader();
 
-        loader.load('./model.glb', (gltf) => {
+        /* ===== 融解切換狀態 ===== */
+        let maskAssets = [];
+        let currentIndex = 0;
+        let transition = null;
+        let lastFormedTime = 0;
+
+        /* ===== 由 GLTF 建立粒子資產 ===== */
+        function buildAsset(gltf) {
             let targetMesh = null, targetTexture = null;
             gltf.scene.traverse((child) => {
                 if (child.isMesh && !targetMesh) {
@@ -98,14 +138,14 @@
                     if (child.material && child.material.map) targetTexture = child.material.map;
                 }
             });
-            if (!targetMesh) return statusElement.innerText = "ERROR // 檔案中未檢測到實體網格。";
-            statusElement.innerText = "SAMPLING // 提取原色與表面採樣中...";
+            if (!targetMesh) return null;
 
             const sampler = new MeshSurfaceSampler(targetMesh).build();
             const particleCount = 60000;
             const geometry = new THREE.BufferGeometry();
             const positions = new Float32Array(particleCount * 3);
             const uvs = new Float32Array(particleCount * 2);
+            const randoms = new Float32Array(particleCount);
             const tempPosition = new THREE.Vector3(), tempUv = new THREE.Vector2();
 
             for (let i = 0; i < particleCount; i++) {
@@ -115,9 +155,10 @@
                 positions[i * 3 + 2] = tempPosition.z * 8.0;
                 uvs[i * 2] = tempUv.x;
                 uvs[i * 2 + 1] = tempUv.y;
+                randoms[i] = Math.random();
             }
 
-            /* ===== 自動校準：居中 + 歸一化 ===== */
+            /* 自動校準：居中 + 歸一化 */
             let minX = Infinity, minY = Infinity, minZ = Infinity;
             let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
             for (let i = 0; i < positions.length; i += 3) {
@@ -128,7 +169,6 @@
             const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
             const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1;
             const norm = 10 / maxDim;
-
             for (let i = 0; i < positions.length; i += 3) {
                 positions[i]     = (positions[i]     - cx) * norm;
                 positions[i + 1] = (positions[i + 1] - cy) * norm;
@@ -137,61 +177,115 @@
 
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
             geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+            geometry.setAttribute('aRandom', new THREE.BufferAttribute(randoms, 1));
 
-            const material = new THREE.ShaderMaterial({
-                uniforms: { uTime: { value: 0.0 }, uTexture: { value: targetTexture } },
+            return { geometry, texture: targetTexture };
+        }
+
+        function createMaterial(texture) {
+            return new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0.0 },
+                    uTexture: { value: texture },
+                    uDissolve: { value: 0.0 }   // 0 = 完整, 1 = 完全散開
+                },
                 vertexShader: `
-                    uniform float uTime; varying vec2 vUv;
+                    uniform float uTime;
+                    uniform float uDissolve;
+                    attribute float aRandom;
+                    varying vec2 vUv;
+                    varying float vAlpha;
                     void main() {
-                        vUv = uv; vec3 pos = position;
+                        vUv = uv;
+                        vec3 pos = position;
                         pos.x += sin(pos.y * 2.0 + uTime * 2.0) * 0.2;
                         pos.y += cos(pos.x * 2.0 + uTime * 2.5) * 0.2;
                         pos.z += sin(pos.x * 2.0 + pos.y * 2.0 + uTime * 3.0) * 0.3;
+
+                        // 融解：每顆粒子錯開時間散飛
+                        float local = clamp(uDissolve * 1.5 - aRandom * 0.5, 0.0, 1.0);
+                        float ease = local * local * (3.0 - 2.0 * local);
+                        vec3 scatterDir = normalize(position + vec3(
+                            (aRandom - 0.5) * 2.0,
+                            (fract(aRandom * 7.31) - 0.5) * 2.0,
+                            (fract(aRandom * 3.77) - 0.5) * 2.0
+                        ));
+                        pos += scatterDir * ease * 7.0;
+                        vAlpha = 1.0 - ease;
+
                         vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
                         gl_PointSize = (12.0 + sin(uTime * 4.0 + pos.x)*3.0) * (5.0 / -mvPosition.z);
                         gl_Position = projectionMatrix * mvPosition;
                     }`,
                 fragmentShader: `
-                    uniform sampler2D uTexture; varying vec2 vUv;
+                    uniform sampler2D uTexture;
+                    varying vec2 vUv;
+                    varying float vAlpha;
                     void main() {
                         vec2 coord = gl_PointCoord - vec2(0.5);
                         if (length(coord) > 0.5) discard;
                         vec4 texColor = texture2D(uTexture, vUv);
-                        gl_FragColor = vec4(texColor.rgb, smoothstep(0.5, 0.1, length(coord)) * texColor.a * 0.9);
+                        float alpha = smoothstep(0.5, 0.1, length(coord)) * texColor.a * 0.9 * vAlpha;
+                        if (alpha < 0.01) discard;
+                        gl_FragColor = vec4(texColor.rgb, alpha);
                     }`,
                 transparent: true, blending: THREE.NormalBlending, depthWrite: false
             });
+        }
 
-            particleSystem = new THREE.Points(geometry, material);
+        /* ===== 預載所有面具 ===== */
+        async function loadAllMasks() {
+            for (let i = 0; i < MODEL_FILES.length; i++) {
+                statusElement.innerText = `LOADING // 載入面具模型 ${i + 1}/${MODEL_FILES.length}...`;
+                try {
+                    const gltf = await loader.loadAsync(MODEL_FILES[i]);
+                    const asset = buildAsset(gltf);
+                    if (asset) maskAssets.push(asset);
+                } catch (e) {
+                    console.warn(`SKIP // 無法載入 ${MODEL_FILES[i]}`);
+                }
+            }
+            return maskAssets.length > 0;
+        }
+
+        function applyAsset(i) {
+            currentIndex = i;
+            particleSystem.geometry = maskAssets[i].geometry;
+            particleSystem.material.uniforms.uTexture.value = maskAssets[i].texture;
+        }
+
+        /* ===== 啟動 ===== */
+        (async () => {
+            const ok = await loadAllMasks();
+            if (!ok) { statusElement.innerText = "ERROR // 沒有任何有效模型"; return; }
+            particleSystem = new THREE.Points(maskAssets[0].geometry, createMaterial(maskAssets[0].texture));
             maskGroup.add(particleSystem);
             statusElement.innerText = "WAITING // 等待攝像頭權限授權...";
             initAIEngines();
-        });
+        })();
 
         function initAIEngines() {
             const faceMesh = new window.FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
-            faceMesh.setOptions({ maxNumFaces: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+            faceMesh.setOptions({ maxNumFaces: 4, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
             faceMesh.onResults((results) => {
                 if (!particleSystem || !results.multiFaceLandmarks?.length) return;
-                const lm = results.multiFaceLandmarks[0];
+                const lm = pickFace(results.multiFaceLandmarks);
                 const aspect = window.innerWidth / window.innerHeight;
 
                 const mx = (pt) => ({ x: 1.0 - pt.x, y: pt.y });
                 const nose = mx(lm[1]);
                 const eyeL = mx(lm[33]);
                 const eyeR = mx(lm[263]);
+                trackedNose = { x: nose.x, y: nose.y };
 
-                // 1. 位置
                 const targetX = (nose.x - 0.5) * 30.0 * aspect;
                 const targetY = -(nose.y - 0.5 - MASK_Y_OFFSET) * 30.0;
                 const targetZ = 0;
 
-                // 2. 大小
                 const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
                 const targetScale = eyeDist * SCALE_FACTOR;
 
-                // 3. 旋轉（基線校準後嘅真實俯仰）
                 const eyeCenterX = (eyeL.x + eyeR.x) / 2;
                 const eyeCenterY = (eyeL.y + eyeR.y) / 2;
 
@@ -277,14 +371,38 @@
             });
 
             cameraUtils.start().then(() => {
-                statusElement.innerText = "SYSTEM ACTIVE // 撳 R 鍵隨時校準平視姿勢";
+                statusElement.innerText = "SYSTEM ACTIVE // 撳 R 校準平視";
                 setTimeout(() => { statusElement.style.opacity = '0'; }, 4000);
             });
         }
 
+        /* ===== 主循環 + 融解切換狀態機 ===== */
         function animate() {
             requestAnimationFrame(animate);
-            if (particleSystem) particleSystem.material.uniforms.uTime.value = clock.getElapsedTime();
+            const t = clock.getElapsedTime();
+            if (particleSystem) {
+                const u = particleSystem.material.uniforms;
+                u.uTime.value = t;
+
+                if (maskAssets.length > 1) {
+                    if (!transition) {
+                        if (t - lastFormedTime >= SWITCH_INTERVAL) {
+                            transition = { phase: 'out', start: t, next: (currentIndex + 1) % maskAssets.length };
+                        }
+                    } else if (transition.phase === 'out') {
+                        const p = (t - transition.start) / DISSOLVE_OUT;
+                        u.uDissolve.value = Math.min(p, 1);
+                        if (p >= 1) {
+                            applyAsset(transition.next);   // 喺完全隱形嘅一刻交換
+                            transition = { phase: 'in', start: t };
+                        }
+                    } else {
+                        const p = (t - transition.start) / DISSOLVE_IN;
+                        u.uDissolve.value = 1 - Math.min(p, 1);
+                        if (p >= 1) { transition = null; lastFormedTime = t; }
+                    }
+                }
+            }
             renderer.render(scene, camera);
         }
         animate();
