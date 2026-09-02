@@ -63,7 +63,7 @@
             './model.glb':  { count: 66000 },
             './model2.glb': { count: 150000, pointSize: 1.6, noiseAmp: 0.35, scaleMul: 1.2 },
             './model3.glb': { scaleMul: 1.2, count: 100000 },
-            './model4.glb': { scaleMul: 1.35, yOffset: 0.28, count: 72600 },
+            './model4.glb': { scaleMul: 1.35, yOffset: 0.21, count: 72600 },
             './model5.glb': { count: 72000, pointSize: 1.3, noiseAmp: 0.5, scaleMul: 1.1 },
         };
 
@@ -72,8 +72,8 @@
         const SWITCH_INTERVAL = 8.0;
         const DISSOLVE_OUT    = 0.8;
         const DISSOLVE_IN     = 1.0;
-        const SCALE_FACTOR = 12.0;
-        const MASK_Y_OFFSET = 0.15;   // 已換算去 FRUSTUM 增益
+        const SCALE_FACTOR = 14.4;   // 【新】12 × 1.2，整體放大
+        const MASK_Y_OFFSET = 0.08;  // 【新】下移（正數＝向上）
         const ROTATION_AMP  = 0.8;
         const LERP_SPEED    = 0.3;
         const STRETCH_COMPENSATION = true;
@@ -93,7 +93,7 @@
 
         /* ===== 校準鍵 ===== */
         let pitchBaseline = null;
-        let scaleRatioBaseline = null;   // 【新】眼距/面高 比例基線
+        let scaleRatioBaseline = null;
         let baselineCount = 0;
         const BASELINE_FRAMES = 45;
         let recalibrate = false;
@@ -328,12 +328,11 @@
                 const FRUSTUM_W = FRUSTUM_H * aspect;
 
                 const targetX = (anchorX - 0.5) * FRUSTUM_W;
-                // 【修正】垂直統一用 FRUSTUM_H 增益
                 const targetY = -(nose.y - 0.5 - yOff) * FRUSTUM_H;
                 const targetZ = 0;
 
                 const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
-                // 【修正】穩定大細：用面高反推眼距，轉頭唔再收縮
+                // 穩定大細：用面高反推眼距，轉頭唔再收縮
                 const faceH = Math.abs(lm[152].y - lm[10].y);
                 const ratioNow = eyeDist / Math.max(1e-4, faceH);
 
