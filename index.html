@@ -7,8 +7,15 @@
     <style>
         body { margin: 0; background-color: #050508; overflow: hidden; color: white; font-family: sans-serif; }
         #input_video { display: none; }
-        #output_canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: -1; }
-        #webgl-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; pointer-events: none; }
+        /* 【鏡像統一】兩層都用 CSS 鏡像，保證方向永遠一致 */
+        #output_canvas {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            object-fit: cover; z-index: -1; transform: scaleX(-1);
+        }
+        #webgl-container {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            z-index: 1; pointer-events: none; transform: scaleX(-1);
+        }
         #status {
             position: absolute; top: 20px; left: 20px; padding: 10px;
             background: rgba(0,0,0,0.6); border-left: 3px solid #00ffcc;
@@ -54,7 +61,7 @@
             './model.glb':  { count: 66000 },                                                       // 貓頭鷹
             './model2.glb': { count: 150000, pointSize: 1.6, noiseAmp: 0.35, scaleMul: 1.2 },       // 刺蝟
             './model3.glb': { scaleMul: 1.2, count: 100000 },                                       // 獅子
-            './model4.glb': { scaleMul: 1.5, yOffset: 0.14, count: 72600 },                         // 兔子 (位置下移、密度+10%)
+            './model4.glb': { scaleMul: 1.35, yOffset: 0.19, count: 72600 },                        // 兔子：細10%、上移10%
             './model5.glb': { count: 72000, pointSize: 1.3, noiseAmp: 0.5, scaleMul: 1.1 },         // 倉鼠
         };
 
@@ -78,6 +85,7 @@
         const statusElement = document.getElementById('status');
         const container = document.getElementById('webgl-container');
 
+        /* ===== 俯仰基線校準 ===== */
         let pitchBaseline = null;
         let baselineCount = 0;
         const BASELINE_FRAMES = 45;
@@ -86,6 +94,7 @@
             if (e.key === 'r' || e.key === 'R') recalibrate = true;
         });
 
+        /* ===== 多人 face 選擇（原始座標） ===== */
         let trackedNose = null;
         function pickFace(faces) {
             let largest = null, largestSize = 0;
@@ -94,7 +103,7 @@
                 const size = Math.hypot(f[263].x - f[33].x, f[263].y - f[33].y);
                 if (size > largestSize) { largestSize = size; largest = f; }
                 if (trackedNose) {
-                    const d = Math.hypot((1 - f[1].x) - trackedNose.x, f[1].y - trackedNose.y);
+                    const d = Math.hypot(f[1].x - trackedNose.x, f[1].y - trackedNose.y);
                     if (d < nearestD) { nearestD = d; nearest = f; }
                 }
             }
@@ -136,6 +145,7 @@
         let transition = null;
         let lastFormedTime = 0;
 
+        /* ===== 建立粒子資產 ===== */
         function buildAsset(gltf, cfg) {
             let targetMesh = null, targetTexture = null;
             gltf.scene.traverse((child) => {
@@ -285,10 +295,10 @@
                 const lm = pickFace(results.multiFaceLandmarks);
                 const aspect = window.innerWidth / window.innerHeight;
 
-                const mx = (pt) => ({ x: 1.0 - pt.x, y: pt.y });
-                const nose = mx(lm[1]);
-                const eyeL = mx(lm[33]);
-                const eyeR = mx(lm[263]);
+                // 【統一原始座標】鏡像交由 CSS 處理，呢度唔再做任何翻轉
+                const nose = lm[1];
+                const eyeL = lm[33];
+                const eyeR = lm[263];
                 trackedNose = { x: nose.x, y: nose.y };
 
                 const cfg = maskAssets[currentIndex]?.cfg || {};
@@ -317,7 +327,6 @@
                 const base = pitchBaseline ?? rawRatio;
 
                 const dynamicPitch = -(rawRatio - base) * ROTATION_AMP;
-                // 【修正】移除負號，修正左右望方向相反嘅問題
                 const dynamicYaw   = ((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;
                 const dynamicRoll  = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x);
 
@@ -349,11 +358,9 @@
             selfieSegmentation.setOptions({ modelSelection: 1 });
 
             selfieSegmentation.onResults((results) => {
+                // 【統一原始座標】唔再喺 canvas 入面鏡像，鏡像交由 CSS 處理
                 canvasCtx.save();
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
-                canvasCtx.scale(-1, 1);
-                canvasCtx.translate(-canvasElement.width, 0);
 
                 canvasCtx.filter = 'blur(15px) brightness(0.85)';
                 canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
