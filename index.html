@@ -63,7 +63,7 @@
             './model.glb':  { count: 66000 },
             './model2.glb': { count: 150000, pointSize: 1.6, noiseAmp: 0.35, scaleMul: 1.2 },
             './model3.glb': { scaleMul: 1.2, count: 100000 },
-            './model4.glb': { scaleMul: 1.35, yOffset: 0.19, count: 72600 },
+            './model4.glb': { scaleMul: 1.35, yOffset: 0.28, count: 72600 },
             './model5.glb': { count: 72000, pointSize: 1.3, noiseAmp: 0.5, scaleMul: 1.1 },
         };
 
@@ -73,7 +73,7 @@
         const DISSOLVE_OUT    = 0.8;
         const DISSOLVE_IN     = 1.0;
         const SCALE_FACTOR = 12.0;
-        const MASK_Y_OFFSET = 0.10;
+        const MASK_Y_OFFSET = 0.15;   // 已換算去 FRUSTUM 增益
         const ROTATION_AMP  = 0.8;
         const LERP_SPEED    = 0.3;
         const STRETCH_COMPENSATION = true;
@@ -93,6 +93,7 @@
 
         /* ===== 校準鍵 ===== */
         let pitchBaseline = null;
+        let scaleRatioBaseline = null;   // 【新】眼距/面高 比例基線
         let baselineCount = 0;
         const BASELINE_FRAMES = 45;
         let recalibrate = false;
@@ -145,7 +146,6 @@
         container.appendChild(renderer.domElement);
         resizeCanvas();
 
-        /* 【新】真實視錐尺寸：1:1 映射，消除過衝浮動 */
         const FRUSTUM_H = 2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
 
         if (MIRROR_DISPLAY) {
@@ -323,17 +323,19 @@
                 const scaleMul = cfg.scaleMul ?? 1.0;
                 const yOff = cfg.yOffset ?? MASK_Y_OFFSET;
 
-                // 【新】水平錨點改用兩頰中點（轉頭時穩定，面具緊貼頭部）
+                // 水平錨點：兩頰中點（轉頭時穩定）
                 const anchorX = (lm[234].x + lm[454].x) / 2;
                 const FRUSTUM_W = FRUSTUM_H * aspect;
 
-                // 【新】1:1 視錐映射，消除過衝
                 const targetX = (anchorX - 0.5) * FRUSTUM_W;
-                const targetY = -(nose.y - 0.5) * FRUSTUM_H + yOff * 30.0;
+                // 【修正】垂直統一用 FRUSTUM_H 增益
+                const targetY = -(nose.y - 0.5 - yOff) * FRUSTUM_H;
                 const targetZ = 0;
 
                 const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
-                const targetScale = eyeDist * SCALE_FACTOR * scaleMul;
+                // 【修正】穩定大細：用面高反推眼距，轉頭唔再收縮
+                const faceH = Math.abs(lm[152].y - lm[10].y);
+                const ratioNow = eyeDist / Math.max(1e-4, faceH);
 
                 const eyeCenterX = (eyeL.x + eyeR.x) / 2;
                 const eyeCenterY = (eyeL.y + eyeR.y) / 2;
@@ -341,13 +343,18 @@
                 const rawRatio = (nose.y - eyeCenterY) / eyeDist;
                 if (recalibrate) {
                     pitchBaseline = rawRatio;
+                    scaleRatioBaseline = ratioNow;
                     baselineCount = BASELINE_FRAMES;
                     recalibrate = false;
                 } else if (baselineCount < BASELINE_FRAMES) {
                     pitchBaseline = (pitchBaseline ?? 0) + rawRatio / BASELINE_FRAMES;
+                    scaleRatioBaseline = (scaleRatioBaseline ?? 0) + ratioNow / BASELINE_FRAMES;
                     baselineCount++;
                 }
                 const base = pitchBaseline ?? rawRatio;
+                const stableEyeDist = faceH * (scaleRatioBaseline ?? ratioNow);
+
+                const targetScale = stableEyeDist * SCALE_FACTOR * scaleMul;
 
                 const dynamicPitch = -(rawRatio - base) * ROTATION_AMP;
                 const dynamicYaw   = ((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;
