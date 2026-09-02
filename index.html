@@ -80,7 +80,7 @@
         const MODEL_YAW_OFFSET   = THREE.MathUtils.degToRad(0);
         const MODEL_ROLL_OFFSET  = THREE.MathUtils.degToRad(0);
 
-        /* 【新】俯仰補正：默認 0°，撳 P 即時循環切換 */
+        /* 俯仰補正：0° 已確認正確；P 鍵仍可即時切換備用 */
         const PITCH_OPTIONS = [0, 180, 90, 270];
         let pitchOptionIndex = 0;
         let modelPitchOffset = THREE.MathUtils.degToRad(PITCH_OPTIONS[0]);
@@ -144,6 +144,9 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         container.appendChild(renderer.domElement);
         resizeCanvas();
+
+        /* 【新】真實視錐尺寸：1:1 映射，消除過衝浮動 */
+        const FRUSTUM_H = 2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
 
         if (MIRROR_DISPLAY) {
             canvasElement.style.transform = 'scaleX(-1)';
@@ -320,8 +323,13 @@
                 const scaleMul = cfg.scaleMul ?? 1.0;
                 const yOff = cfg.yOffset ?? MASK_Y_OFFSET;
 
-                const targetX = (nose.x - 0.5) * 30.0 * aspect;
-                const targetY = -(nose.y - 0.5 - yOff) * 30.0;
+                // 【新】水平錨點改用兩頰中點（轉頭時穩定，面具緊貼頭部）
+                const anchorX = (lm[234].x + lm[454].x) / 2;
+                const FRUSTUM_W = FRUSTUM_H * aspect;
+
+                // 【新】1:1 視錐映射，消除過衝
+                const targetX = (anchorX - 0.5) * FRUSTUM_W;
+                const targetY = -(nose.y - 0.5) * FRUSTUM_H + yOff * 30.0;
                 const targetZ = 0;
 
                 const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
