@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AR 智慧動態縮放與彩色粒子面具</title>
+    <title>社畜照相館</title>
     <style>
         body { margin: 0; background-color: #050508; overflow: hidden; color: white; font-family: sans-serif; }
         #input_video { display: none; }
@@ -35,6 +35,33 @@
         }
         #uiPanel.open { display: block; }
         #uiPanel input[type=range] { width: 100%; margin-top: 8px; accent-color: #00ffcc; }
+        /* ===== 截圖按鈕／閃光／提示 ===== */
+        #captureBtn {
+            position: fixed; bottom: 20px; left: 20px; z-index: 30;
+            width: 52px; height: 52px; border-radius: 50%;
+            background: rgba(0,0,0,0.6); border: 1px solid #00ffcc;
+            font-size: 24px; cursor: pointer; backdrop-filter: blur(5px);
+        }
+        #flash { position: fixed; inset: 0; background: white; opacity: 0; pointer-events: none; z-index: 40; transition: opacity .15s; }
+        #toast {
+            position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%);
+            padding: 10px 18px; background: rgba(0,0,0,0.75); border-left: 3px solid #00ffcc;
+            color: #fff; font-size: 13px; letter-spacing: 1px; z-index: 40;
+            opacity: 0; pointer-events: none; transition: opacity .4s; white-space: nowrap;
+        }
+        #toast.show { opacity: 1; }
+        /* ===== 浮空問題 ===== */
+        #question {
+            position: absolute; left: 50%; top: 10%; transform: translateX(-50%);
+            width: 90%; text-align: center; pointer-events: none; z-index: 5;
+            color: rgba(255,255,255,0.92); font-size: clamp(16px, 2.4vw, 26px);
+            letter-spacing: 3px; line-height: 1.8;
+            text-shadow: 0 0 14px rgba(0,255,204,.35), 0 2px 6px rgba(0,0,0,.6);
+            opacity: 0; transition: opacity 1.2s ease;
+            animation: floatY 6s ease-in-out infinite;
+        }
+        #question.show { opacity: 1; }
+        @keyframes floatY { 0%,100% { margin-top: 0; } 50% { margin-top: -14px; } }
     </style>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -51,12 +78,13 @@
     </script>
 </head>
 <body>
-    <div id="status">INITIALIZING // 載入動態縮放與景深虛化引擎...</div>
+    <div id="status">INITIALIZING // 社畜照相館 // 載入動態縮放與景深虛化引擎...</div>
     <video id="input_video" playsinline></video>
     <canvas id="output_canvas"></canvas>
     <div id="webgl-container"></div>
 
-    <!-- ===== 即時大小調整 UI ===== -->
+    <div id="question"></div>
+
     <div id="ui">
         <div id="uiPanel">
             面具大小：<span id="sizeVal">100%</span>
@@ -64,14 +92,28 @@
         </div>
         <button id="uiToggle" title="調整面具大小">⚙</button>
     </div>
+    <button id="captureBtn" title="拍下呢張相">📸</button>
+    <div id="flash"></div>
+    <div id="toast"></div>
 
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
-        /* ================= 顯示鏡像開關 ================= */
-        const MIRROR_DISPLAY = true;
+        /* ================= 遠端領取設定 ================= */
+        const SUPABASE_URL    = 'https://oeesjjbjiiaqhwvhhnvlip.supabase.co';
+        const SUPABASE_KEY    = 'sb_publishable_PrB4OX0QtliFYXsQNvs5uw_9JdrfmIh';
+        const SUPABASE_BUCKET = 'booth';
+
+        /* ============ 浮空問題（對應 MODEL_FILES 順序） ============ */
+        const QUESTIONS = [
+            '觀察了這麼久，你對這世界足夠了解了嗎？',                       // 貓頭鷹
+            '有沒有一刻，你想放下刺來，讓別人可以靠近？',                   // 刺蝟
+            '在意別人的目光，再累也不敢倒下來嗎？',                         // 獅子
+            '每次答應別人說「沒有問題」，是不敢有問題嗎？',                 // 兔子
+            '不斷地跑，不斷儲存。什麼時候能停下來？',                       // 倉鼠
+        ];
 
         /* ================= 面具清單 ================= */
         const MODEL_FILES = [
@@ -101,403 +143,536 @@
         const ROTATION_AMP  = 0.8;
         const LERP_SPEED    = 0.3;
         const STRETCH_COMPENSATION = true;
+        const MIRROR_DISPLAY = true;
         const MODEL_YAW_OFFSET   = THREE.MathUtils.degToRad(0);
         const MODEL_ROLL_OFFSET  = THREE.MathUtils.degToRad(0);
 
-        /* 俯仰補正：0° 已確認正確；P 鍵仍可即時切換備用 */
         const PITCH_OPTIONS = [0, 180, 90, 270];
         let pitchOptionIndex = 0;
         let modelPitchOffset = THREE.MathUtils.degToRad(PITCH_OPTIONS[0]);
 
-        /* ===== 【新】即時大小倍率（每裝置自動記憶） ===== */
-        let userSizeMul = 1.0;
-        try { userSizeMul = parseFloat(localStorage.getItem('maskSizeMul')) || 1.0; } catch (e) {}
-        const sizeSlider = document.getElementById('sizeSlider');
-        const sizeVal    = document.getElementById('sizeVal');
-        const uiPanel    = document.getElementById('uiPanel');
-        const uiToggle   = document.getElementById('uiToggle');
-        sizeSlider.value = userSizeMul;
-        sizeVal.textContent = Math.round(userSizeMul * 100) + '%';
-        sizeSlider.addEventListener('input', () => {
-            userSizeMul = parseFloat(sizeSlider.value);
+        /* ================= 模式分流：領取頁 vs Booth ================= */
+        const IS_CLAIM = new URLSearchParams(location.search).has('claim');
+        if (IS_CLAIM) startClaimMode(); else startBooth();
+
+        /* ############################################################
+           領取頁模式（?claim=1）：固定 URL，只顯示最新一張，自動刷新
+        ############################################################ */
+        function startClaimMode() {
+            document.body.innerHTML = `
+                <style>
+                    body { background:#050508; color:#fff; font-family:sans-serif; margin:0;
+                           min-height:100vh; display:flex; align-items:center; justify-content:center; }
+                    #claimWrap { text-align:center; padding:24px; max-width:92vw; }
+                    h1 { font-size:22px; letter-spacing:6px; color:#00ffcc; }
+                    #claimSub { color:#888; font-size:12px; letter-spacing:2px; margin-top:4px; }
+                    #claimImg { max-width:92vw; max-height:62vh; border:2px solid #00ffcc;
+                                border-radius:10px; background:#111; margin-top:14px; }
+                    #claimDownload { display:inline-block; margin-top:16px; padding:10px 26px;
+                                     border:1px solid #00ffcc; color:#00ffcc; text-decoration:none;
+                                     letter-spacing:2px; border-radius:6px; }
+                    #claimHint { color:#888; font-size:12px; letter-spacing:1px; }
+                    #claimQuote { margin-top:22px; color:rgba(255,255,255,.85); font-size:14px;
+                                  letter-spacing:2px; line-height:2; }
+                </style>
+                <div id="claimWrap">
+                    <h1>社畜照相館</h1>
+                    <div id="claimSub">領取你嘅職員照</div>
+                    <img id="claimImg" alt="最新照片">
+                    <p id="claimHint">頁面只保留最新一張 · 每 4 秒自動刷新</p>
+                    <a id="claimDownload" download="社畜照相館.jpg">下載照片</a>
+                    <p id="claimQuote">你不只是你的角色。在成為任何角色之前，你首先是你自己。</p>
+                </div>`;
+            const img  = document.getElementById('claimImg');
+            const dl   = document.getElementById('claimDownload');
+            const hint = document.getElementById('claimHint');
+            if (!SUPABASE_URL) { hint.textContent = '未設定遠端領取（SUPABASE_URL 為空）'; return; }
+            const base = `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_BUCKET}/latest.jpg`;
+            let got = false;
+            const refresh = () => {
+                const u = base + '?t=' + Date.now();
+                const probe = new Image();
+                probe.onload = () => { got = true; img.src = u; dl.href = u; };
+                probe.onerror = () => { if (!got) hint.textContent = '未有照片——去 booth 影一張啦！'; };
+                probe.src = u;
+            };
+            refresh();
+            setInterval(refresh, 4000);
+        }
+
+        /* ############################################################
+           Booth 模式
+        ############################################################ */
+        function startBooth() {
+
+            /* 即時大小倍率（每裝置記憶） */
+            let userSizeMul = 1.0;
+            try { userSizeMul = parseFloat(localStorage.getItem('maskSizeMul')) || 1.0; } catch (e) {}
+            const sizeSlider = document.getElementById('sizeSlider');
+            const sizeVal    = document.getElementById('sizeVal');
+            const uiPanel    = document.getElementById('uiPanel');
+            const uiToggle   = document.getElementById('uiToggle');
+            sizeSlider.value = userSizeMul;
             sizeVal.textContent = Math.round(userSizeMul * 100) + '%';
-            try { localStorage.setItem('maskSizeMul', String(userSizeMul)); } catch (e) {}
-        });
-        uiToggle.addEventListener('click', () => uiPanel.classList.toggle('open'));
+            sizeSlider.addEventListener('input', () => {
+                userSizeMul = parseFloat(sizeSlider.value);
+                sizeVal.textContent = Math.round(userSizeMul * 100) + '%';
+                try { localStorage.setItem('maskSizeMul', String(userSizeMul)); } catch (e) {}
+            });
+            uiToggle.addEventListener('click', () => uiPanel.classList.toggle('open'));
 
-        const videoElement = document.getElementById('input_video');
-        const canvasElement = document.getElementById('output_canvas');
-        const canvasCtx = canvasElement.getContext('2d');
-        const statusElement = document.getElementById('status');
-        const container = document.getElementById('webgl-container');
+            const videoElement = document.getElementById('input_video');
+            const canvasElement = document.getElementById('output_canvas');
+            const canvasCtx = canvasElement.getContext('2d');
+            const statusElement = document.getElementById('status');
+            const container = document.getElementById('webgl-container');
+            const questionEl = document.getElementById('question');
+            const captureBtn = document.getElementById('captureBtn');
+            const flashEl = document.getElementById('flash');
+            const toastEl = document.getElementById('toast');
 
-        /* ===== 校準鍵 ===== */
-        let pitchBaseline = null;
-        let scaleRatioBaseline = null;
-        let baselineCount = 0;
-        const BASELINE_FRAMES = 45;
-        let recalibrate = false;
-        window.addEventListener('keydown', (e) => {
-            if (e.key === 'r' || e.key === 'R') recalibrate = true;
-            if (e.key === 'p' || e.key === 'P') {
-                pitchOptionIndex = (pitchOptionIndex + 1) % PITCH_OPTIONS.length;
-                modelPitchOffset = THREE.MathUtils.degToRad(PITCH_OPTIONS[pitchOptionIndex]);
-                statusElement.style.opacity = '1';
-                statusElement.innerText = `PITCH OFFSET: ${PITCH_OPTIONS[pitchOptionIndex]}°（撳 P 切換）`;
+            let toastTimer = null;
+            function showToast(msg) {
+                toastEl.textContent = msg;
+                toastEl.classList.add('show');
+                clearTimeout(toastTimer);
+                toastTimer = setTimeout(() => toastEl.classList.remove('show'), 3000);
             }
-        });
 
-        /* ===== 多人 face 選擇 ===== */
-        let trackedNose = null;
-        function pickFace(faces) {
-            let largest = null, largestSize = 0;
-            let nearest = null, nearestD = Infinity;
-            for (const f of faces) {
-                const size = Math.hypot(f[263].x - f[33].x, f[263].y - f[33].y);
-                if (size > largestSize) { largestSize = size; largest = f; }
-                if (trackedNose) {
-                    const d = Math.hypot(f[1].x - trackedNose.x, f[1].y - trackedNose.y);
-                    if (d < nearestD) { nearestD = d; nearest = f; }
-                }
-            }
-            if (!trackedNose) return largest;
-            if (nearest && nearestD < 0.2) {
-                const nSize = Math.hypot(nearest[263].x - nearest[33].x, nearest[263].y - nearest[33].y);
-                if (largest !== nearest && largestSize > nSize * 1.25) return largest;
-                return nearest;
-            }
-            return largest;
-        }
-
-        function resizeCanvas() {
-            canvasElement.width = window.innerWidth;
-            canvasElement.height = window.innerHeight;
-            if (renderer) renderer.setSize(window.innerWidth, window.innerHeight);
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-        }
-        window.addEventListener('resize', resizeCanvas);
-
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.z = 25;
-        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        container.appendChild(renderer.domElement);
-        resizeCanvas();
-
-        const FRUSTUM_H = 2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-
-        if (MIRROR_DISPLAY) {
-            canvasElement.style.transform = 'scaleX(-1)';
-            renderer.domElement.style.transform = 'scaleX(-1)';
-        }
-
-        const maskGroup = new THREE.Group();
-        scene.add(maskGroup);
-
-        let particleSystem = null;
-        const clock = new THREE.Clock();
-        const loader = new GLTFLoader();
-
-        let maskAssets = [];
-        let currentIndex = 0;
-        let transition = null;
-        let lastFormedTime = 0;
-
-        function buildAsset(gltf, cfg) {
-            let targetMesh = null, targetTexture = null;
-            gltf.scene.traverse((child) => {
-                if (child.isMesh && !targetMesh) {
-                    targetMesh = child;
-                    if (child.material && child.material.map) targetTexture = child.material.map;
+            /* 校準鍵 */
+            let pitchBaseline = null;
+            let scaleRatioBaseline = null;
+            let baselineCount = 0;
+            const BASELINE_FRAMES = 45;
+            let recalibrate = false;
+            window.addEventListener('keydown', (e) => {
+                if (e.key === 'r' || e.key === 'R') recalibrate = true;
+                if (e.key === 'p' || e.key === 'P') {
+                    pitchOptionIndex = (pitchOptionIndex + 1) % PITCH_OPTIONS.length;
+                    modelPitchOffset = THREE.MathUtils.degToRad(PITCH_OPTIONS[pitchOptionIndex]);
+                    statusElement.style.opacity = '1';
+                    statusElement.innerText = `PITCH OFFSET: ${PITCH_OPTIONS[pitchOptionIndex]}°（撳 P 切換）`;
                 }
             });
-            if (!targetMesh) return null;
 
-            const sampler = new MeshSurfaceSampler(targetMesh).build();
-            const particleCount = cfg.count || DEFAULT_PARTICLE_COUNT;
-            const geometry = new THREE.BufferGeometry();
-            const positions = new Float32Array(particleCount * 3);
-            const uvs = new Float32Array(particleCount * 2);
-            const randoms = new Float32Array(particleCount);
-            const tempPosition = new THREE.Vector3(), tempUv = new THREE.Vector2();
-
-            for (let i = 0; i < particleCount; i++) {
-                sampler.sample(tempPosition, undefined, undefined, tempUv);
-                positions[i * 3] = tempPosition.x * 8.0;
-                positions[i * 3 + 1] = tempPosition.y * 8.0;
-                positions[i * 3 + 2] = tempPosition.z * 8.0;
-                uvs[i * 2] = tempUv.x;
-                uvs[i * 2 + 1] = tempUv.y;
-                randoms[i] = Math.random();
-            }
-
-            let minX = Infinity, minY = Infinity, minZ = Infinity;
-            let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-            for (let i = 0; i < positions.length; i += 3) {
-                minX = Math.min(minX, positions[i]);     maxX = Math.max(maxX, positions[i]);
-                minY = Math.min(minY, positions[i + 1]); maxY = Math.max(maxY, positions[i + 1]);
-                minZ = Math.min(minZ, positions[i + 2]); maxZ = Math.max(maxZ, positions[i + 2]);
-            }
-            const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
-            const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1;
-            const norm = 10 / maxDim;
-            for (let i = 0; i < positions.length; i += 3) {
-                positions[i]     = (positions[i]     - cx) * norm;
-                positions[i + 1] = (positions[i + 1] - cy) * norm;
-                positions[i + 2] = (positions[i + 2] - cz) * norm;
-            }
-
-            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-            geometry.setAttribute('aRandom', new THREE.BufferAttribute(randoms, 1));
-
-            return { geometry, texture: targetTexture, cfg };
-        }
-
-        function createMaterial(texture, cfg) {
-            return new THREE.ShaderMaterial({
-                uniforms: {
-                    uTime: { value: 0.0 },
-                    uTexture: { value: texture },
-                    uDissolve: { value: 0.0 },
-                    uPointSize: { value: cfg.pointSize ?? 1.0 },
-                    uNoiseAmp: { value: cfg.noiseAmp ?? 1.0 }
-                },
-                vertexShader: `
-                    uniform float uTime;
-                    uniform float uDissolve;
-                    uniform float uPointSize;
-                    uniform float uNoiseAmp;
-                    attribute float aRandom;
-                    varying vec2 vUv;
-                    varying float vAlpha;
-                    void main() {
-                        vUv = uv;
-                        vec3 pos = position;
-                        pos.x += sin(pos.y * 2.0 + uTime * 2.0) * 0.2 * uNoiseAmp;
-                        pos.y += cos(pos.x * 2.0 + uTime * 2.5) * 0.2 * uNoiseAmp;
-                        pos.z += sin(pos.x * 2.0 + pos.y * 2.0 + uTime * 3.0) * 0.3 * uNoiseAmp;
-
-                        float local = clamp(uDissolve * 1.5 - aRandom * 0.5, 0.0, 1.0);
-                        float ease = local * local * (3.0 - 2.0 * local);
-                        vec3 scatterDir = normalize(position + vec3(
-                            (aRandom - 0.5) * 2.0,
-                            (fract(aRandom * 7.31) - 0.5) * 2.0,
-                            (fract(aRandom * 3.77) - 0.5) * 2.0
-                        ));
-                        pos += scatterDir * ease * 7.0;
-                        vAlpha = 1.0 - ease;
-
-                        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                        gl_PointSize = uPointSize * (12.0 + sin(uTime * 4.0 + pos.x)*3.0) * (5.0 / -mvPosition.z);
-                        gl_Position = projectionMatrix * mvPosition;
-                    }`,
-                fragmentShader: `
-                    uniform sampler2D uTexture;
-                    varying vec2 vUv;
-                    varying float vAlpha;
-                    void main() {
-                        vec2 coord = gl_PointCoord - vec2(0.5);
-                        if (length(coord) > 0.5) discard;
-                        vec4 texColor = texture2D(uTexture, vUv);
-                        float alpha = smoothstep(0.5, 0.1, length(coord)) * texColor.a * 0.9 * vAlpha;
-                        if (alpha < 0.01) discard;
-                        gl_FragColor = vec4(texColor.rgb, alpha);
-                    }`,
-                transparent: true, blending: THREE.NormalBlending, depthWrite: false
-            });
-        }
-
-        async function loadAllMasks() {
-            for (let i = 0; i < MODEL_FILES.length; i++) {
-                statusElement.innerText = `LOADING // 載入面具模型 ${i + 1}/${MODEL_FILES.length}...`;
-                try {
-                    const gltf = await loader.loadAsync(MODEL_FILES[i]);
-                    const cfg = MODEL_OVERRIDES[MODEL_FILES[i]] || {};
-                    const asset = buildAsset(gltf, cfg);
-                    if (asset) maskAssets.push(asset);
-                } catch (e) {
-                    console.warn(`SKIP // 無法載入 ${MODEL_FILES[i]}`);
-                }
-            }
-            return maskAssets.length > 0;
-        }
-
-        function applyAsset(i) {
-            currentIndex = i;
-            const a = maskAssets[i];
-            particleSystem.geometry = a.geometry;
-            const u = particleSystem.material.uniforms;
-            u.uTexture.value = a.texture;
-            u.uPointSize.value = a.cfg.pointSize ?? 1.0;
-            u.uNoiseAmp.value = a.cfg.noiseAmp ?? 1.0;
-        }
-
-        (async () => {
-            const ok = await loadAllMasks();
-            if (!ok) { statusElement.innerText = "ERROR // 沒有任何有效模型"; return; }
-            particleSystem = new THREE.Points(maskAssets[0].geometry, createMaterial(maskAssets[0].texture, maskAssets[0].cfg));
-            applyAsset(0);
-            maskGroup.add(particleSystem);
-            statusElement.innerText = "WAITING // 等待攝像頭權限授權...";
-            initAIEngines();
-        })();
-
-        function initAIEngines() {
-            const faceMesh = new window.FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
-            faceMesh.setOptions({ maxNumFaces: 4, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-
-            faceMesh.onResults((results) => {
-                if (!particleSystem || !results.multiFaceLandmarks?.length) return;
-                const lm = pickFace(results.multiFaceLandmarks);
-                const aspect = window.innerWidth / window.innerHeight;
-
-                const nose = lm[1];
-                const eyeL = lm[33];
-                const eyeR = lm[263];
-                trackedNose = { x: nose.x, y: nose.y };
-
-                const cfg = maskAssets[currentIndex]?.cfg || {};
-                const scaleMul = cfg.scaleMul ?? 1.0;
-                const yOff = cfg.yOffset ?? MASK_Y_OFFSET;
-
-                // 水平錨點：兩頰中點（轉頭時穩定）
-                const anchorX = (lm[234].x + lm[454].x) / 2;
-                const FRUSTUM_W = FRUSTUM_H * aspect;
-
-                const targetX = (anchorX - 0.5) * FRUSTUM_W;
-                const targetY = -(nose.y - 0.5 - yOff) * FRUSTUM_H;
-                const targetZ = 0;
-
-                const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
-                // 穩定大細：用面高反推眼距，轉頭唔再收縮
-                const faceH = Math.abs(lm[152].y - lm[10].y);
-                const ratioNow = eyeDist / Math.max(1e-4, faceH);
-
-                const eyeCenterX = (eyeL.x + eyeR.x) / 2;
-                const eyeCenterY = (eyeL.y + eyeR.y) / 2;
-
-                const rawRatio = (nose.y - eyeCenterY) / eyeDist;
-                if (recalibrate) {
-                    pitchBaseline = rawRatio;
-                    scaleRatioBaseline = ratioNow;
-                    baselineCount = BASELINE_FRAMES;
-                    recalibrate = false;
-                } else if (baselineCount < BASELINE_FRAMES) {
-                    pitchBaseline = (pitchBaseline ?? 0) + rawRatio / BASELINE_FRAMES;
-                    scaleRatioBaseline = (scaleRatioBaseline ?? 0) + ratioNow / BASELINE_FRAMES;
-                    baselineCount++;
-                }
-                const base = pitchBaseline ?? rawRatio;
-                const stableEyeDist = faceH * (scaleRatioBaseline ?? ratioNow);
-
-                // 【新】乘上用戶即時調整嘅 userSizeMul
-                const targetScale = stableEyeDist * SCALE_FACTOR * scaleMul * userSizeMul;
-
-                const dynamicPitch = -(rawRatio - base) * ROTATION_AMP;
-                const dynamicYaw   = ((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;
-                const dynamicRoll  = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x);
-
-                const targetPitch = dynamicPitch + modelPitchOffset;
-                const targetYaw   = dynamicYaw   + MODEL_YAW_OFFSET;
-                const targetRoll  = dynamicRoll  + MODEL_ROLL_OFFSET;
-
-                maskGroup.position.x += (targetX - maskGroup.position.x) * LERP_SPEED;
-                maskGroup.position.y += (targetY - maskGroup.position.y) * LERP_SPEED;
-                maskGroup.position.z += (targetZ - maskGroup.position.z) * LERP_SPEED;
-
-                const videoAspect = (videoElement.videoWidth && videoElement.videoHeight)
-                    ? videoElement.videoWidth / videoElement.videoHeight : (16 / 9);
-                const stretch = STRETCH_COMPENSATION ? (videoAspect / aspect) : 1.0;
-                const newScale = maskGroup.scale.x + (targetScale - maskGroup.scale.x) * LERP_SPEED;
-                maskGroup.scale.set(newScale, newScale * stretch, newScale);
-
-                let dPitch = targetPitch - maskGroup.rotation.x;
-                maskGroup.rotation.x += Math.atan2(Math.sin(dPitch), Math.cos(dPitch)) * LERP_SPEED;
-
-                let dYaw = targetYaw - maskGroup.rotation.y;
-                maskGroup.rotation.y += Math.atan2(Math.sin(dYaw), Math.cos(dYaw)) * LERP_SPEED;
-
-                let dRoll = targetRoll - maskGroup.rotation.z;
-                maskGroup.rotation.z += Math.atan2(Math.sin(dRoll), Math.cos(dRoll)) * LERP_SPEED;
-            });
-
-            const selfieSegmentation = new window.SelfieSegmentation({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}` });
-            selfieSegmentation.setOptions({ modelSelection: 1 });
-
-            selfieSegmentation.onResults((results) => {
-                canvasCtx.save();
-                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
-                canvasCtx.filter = 'blur(15px) brightness(0.85)';
-                canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-                canvasCtx.filter = 'none';
-
-                if (!window._fgCanvas) {
-                    window._fgCanvas = document.createElement('canvas');
-                    window._fgCtx = window._fgCanvas.getContext('2d');
-                }
-                const fg = window._fgCanvas, fgCtx = window._fgCtx;
-                if (fg.width !== canvasElement.width || fg.height !== canvasElement.height) {
-                    fg.width = canvasElement.width;
-                    fg.height = canvasElement.height;
-                }
-
-                fgCtx.clearRect(0, 0, fg.width, fg.height);
-                fgCtx.drawImage(results.image, 0, 0, fg.width, fg.height);
-                fgCtx.globalCompositeOperation = 'destination-in';
-                fgCtx.drawImage(results.segmentationMask, 0, 0, fg.width, fg.height);
-                fgCtx.globalCompositeOperation = 'source-over';
-
-                canvasCtx.drawImage(fg, 0, 0);
-                canvasCtx.restore();
-            });
-
-            const cameraUtils = new window.Camera(videoElement, {
-                onFrame: async () => {
-                    await selfieSegmentation.send({ image: videoElement });
-                    await faceMesh.send({ image: videoElement });
-                },
-                width: 1280, height: 720
-            });
-
-            cameraUtils.start().then(() => {
-                statusElement.innerText = "SYSTEM ACTIVE // ⚙ 調整大小、P 俯仰、R 校準";
-                setTimeout(() => { statusElement.style.opacity = '0'; }, 5000);
-            });
-        }
-
-        function animate() {
-            requestAnimationFrame(animate);
-            const t = clock.getElapsedTime();
-            if (particleSystem) {
-                const u = particleSystem.material.uniforms;
-                u.uTime.value = t;
-
-                if (maskAssets.length > 1) {
-                    if (!transition) {
-                        if (t - lastFormedTime >= SWITCH_INTERVAL) {
-                            transition = { phase: 'out', start: t, next: (currentIndex + 1) % maskAssets.length };
-                        }
-                    } else if (transition.phase === 'out') {
-                        const p = (t - transition.start) / DISSOLVE_OUT;
-                        u.uDissolve.value = Math.min(p, 1);
-                        if (p >= 1) {
-                            applyAsset(transition.next);
-                            transition = { phase: 'in', start: t };
-                        }
-                    } else {
-                        const p = (t - transition.start) / DISSOLVE_IN;
-                        u.uDissolve.value = 1 - Math.min(p, 1);
-                        if (p >= 1) { transition = null; lastFormedTime = t; }
+            /* 多人 face 選擇 */
+            let trackedNose = null;
+            function pickFace(faces) {
+                let largest = null, largestSize = 0;
+                let nearest = null, nearestD = Infinity;
+                for (const f of faces) {
+                    const size = Math.hypot(f[263].x - f[33].x, f[263].y - f[33].y);
+                    if (size > largestSize) { largestSize = size; largest = f; }
+                    if (trackedNose) {
+                        const d = Math.hypot(f[1].x - trackedNose.x, f[1].y - trackedNose.y);
+                        if (d < nearestD) { nearestD = d; nearest = f; }
                     }
                 }
+                if (!trackedNose) return largest;
+                if (nearest && nearestD < 0.2) {
+                    const nSize = Math.hypot(nearest[263].x - nearest[33].x, nearest[263].y - nearest[33].y);
+                    if (largest !== nearest && largestSize > nSize * 1.25) return largest;
+                    return nearest;
+                }
+                return largest;
             }
-            renderer.render(scene, camera);
+
+            function resizeCanvas() {
+                canvasElement.width = window.innerWidth;
+                canvasElement.height = window.innerHeight;
+                if (renderer) renderer.setSize(window.innerWidth, window.innerHeight);
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+            }
+            window.addEventListener('resize', resizeCanvas);
+
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 25;
+            const renderer = new THREE.WebGLRenderer({
+                antialias: true, alpha: true,
+                preserveDrawingBuffer: true   // 【截圖需要】
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            container.appendChild(renderer.domElement);
+            resizeCanvas();
+
+            const FRUSTUM_H = 2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+
+            if (MIRROR_DISPLAY) {
+                canvasElement.style.transform = 'scaleX(-1)';
+                renderer.domElement.style.transform = 'scaleX(-1)';
+            }
+
+            const maskGroup = new THREE.Group();
+            scene.add(maskGroup);
+
+            let particleSystem = null;
+            const clock = new THREE.Clock();
+            const loader = new GLTFLoader();
+
+            let maskAssets = [];
+            let currentIndex = 0;
+            let transition = null;
+            let lastFormedTime = 0;
+
+            function buildAsset(gltf, cfg) {
+                let targetMesh = null, targetTexture = null;
+                gltf.scene.traverse((child) => {
+                    if (child.isMesh && !targetMesh) {
+                        targetMesh = child;
+                        if (child.material && child.material.map) targetTexture = child.material.map;
+                    }
+                });
+                if (!targetMesh) return null;
+
+                const sampler = new MeshSurfaceSampler(targetMesh).build();
+                const particleCount = cfg.count || DEFAULT_PARTICLE_COUNT;
+                const geometry = new THREE.BufferGeometry();
+                const positions = new Float32Array(particleCount * 3);
+                const uvs = new Float32Array(particleCount * 2);
+                const randoms = new Float32Array(particleCount);
+                const tempPosition = new THREE.Vector3(), tempUv = new THREE.Vector2();
+
+                for (let i = 0; i < particleCount; i++) {
+                    sampler.sample(tempPosition, undefined, undefined, tempUv);
+                    positions[i * 3] = tempPosition.x * 8.0;
+                    positions[i * 3 + 1] = tempPosition.y * 8.0;
+                    positions[i * 3 + 2] = tempPosition.z * 8.0;
+                    uvs[i * 2] = tempUv.x;
+                    uvs[i * 2 + 1] = tempUv.y;
+                    randoms[i] = Math.random();
+                }
+
+                let minX = Infinity, minY = Infinity, minZ = Infinity;
+                let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+                for (let i = 0; i < positions.length; i += 3) {
+                    minX = Math.min(minX, positions[i]);     maxX = Math.max(maxX, positions[i]);
+                    minY = Math.min(minY, positions[i + 1]); maxY = Math.max(maxY, positions[i + 1]);
+                    minZ = Math.min(minZ, positions[i + 2]); maxZ = Math.max(maxZ, positions[i + 2]);
+                }
+                const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
+                const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1;
+                const norm = 10 / maxDim;
+                for (let i = 0; i < positions.length; i += 3) {
+                    positions[i]     = (positions[i]     - cx) * norm;
+                    positions[i + 1] = (positions[i + 1] - cy) * norm;
+                    positions[i + 2] = (positions[i + 2] - cz) * norm;
+                }
+
+                geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+                geometry.setAttribute('aRandom', new THREE.BufferAttribute(randoms, 1));
+
+                return { geometry, texture: targetTexture, cfg };
+            }
+
+            function createMaterial(texture, cfg) {
+                return new THREE.ShaderMaterial({
+                    uniforms: {
+                        uTime: { value: 0.0 },
+                        uTexture: { value: texture },
+                        uDissolve: { value: 0.0 },
+                        uPointSize: { value: cfg.pointSize ?? 1.0 },
+                        uNoiseAmp: { value: cfg.noiseAmp ?? 1.0 }
+                    },
+                    vertexShader: `
+                        uniform float uTime;
+                        uniform float uDissolve;
+                        uniform float uPointSize;
+                        uniform float uNoiseAmp;
+                        attribute float aRandom;
+                        varying vec2 vUv;
+                        varying float vAlpha;
+                        void main() {
+                            vUv = uv;
+                            vec3 pos = position;
+                            pos.x += sin(pos.y * 2.0 + uTime * 2.0) * 0.2 * uNoiseAmp;
+                            pos.y += cos(pos.x * 2.0 + uTime * 2.5) * 0.2 * uNoiseAmp;
+                            pos.z += sin(pos.x * 2.0 + pos.y * 2.0 + uTime * 3.0) * 0.3 * uNoiseAmp;
+
+                            float local = clamp(uDissolve * 1.5 - aRandom * 0.5, 0.0, 1.0);
+                            float ease = local * local * (3.0 - 2.0 * local);
+                            vec3 scatterDir = normalize(position + vec3(
+                                (aRandom - 0.5) * 2.0,
+                                (fract(aRandom * 7.31) - 0.5) * 2.0,
+                                (fract(aRandom * 3.77) - 0.5) * 2.0
+                            ));
+                            pos += scatterDir * ease * 7.0;
+                            vAlpha = 1.0 - ease;
+
+                            vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                            gl_PointSize = uPointSize * (12.0 + sin(uTime * 4.0 + pos.x)*3.0) * (5.0 / -mvPosition.z);
+                            gl_Position = projectionMatrix * mvPosition;
+                        }`,
+                    fragmentShader: `
+                        uniform sampler2D uTexture;
+                        varying vec2 vUv;
+                        varying float vAlpha;
+                        void main() {
+                            vec2 coord = gl_PointCoord - vec2(0.5);
+                            if (length(coord) > 0.5) discard;
+                            vec4 texColor = texture2D(uTexture, vUv);
+                            float alpha = smoothstep(0.5, 0.1, length(coord)) * texColor.a * 0.9 * vAlpha;
+                            if (alpha < 0.01) discard;
+                            gl_FragColor = vec4(texColor.rgb, alpha);
+                        }`,
+                    transparent: true, blending: THREE.NormalBlending, depthWrite: false
+                });
+            }
+
+            async function loadAllMasks() {
+                for (let i = 0; i < MODEL_FILES.length; i++) {
+                    statusElement.innerText = `LOADING // 載入面具模型 ${i + 1}/${MODEL_FILES.length}...`;
+                    try {
+                        const gltf = await loader.loadAsync(MODEL_FILES[i]);
+                        const cfg = MODEL_OVERRIDES[MODEL_FILES[i]] || {};
+                        const asset = buildAsset(gltf, cfg);
+                        if (asset) maskAssets.push(asset);
+                    } catch (e) {
+                        console.warn(`SKIP // 無法載入 ${MODEL_FILES[i]}`);
+                    }
+                }
+                return maskAssets.length > 0;
+            }
+
+            function applyAsset(i) {
+                currentIndex = i;
+                const a = maskAssets[i];
+                particleSystem.geometry = a.geometry;
+                const u = particleSystem.material.uniforms;
+                u.uTexture.value = a.texture;
+                u.uPointSize.value = a.cfg.pointSize ?? 1.0;
+                u.uNoiseAmp.value = a.cfg.noiseAmp ?? 1.0;
+                questionEl.textContent = QUESTIONS[i] || '';   // 問題跟隨動物
+            }
+
+            /* ===== 截圖合成 ===== */
+            async function capturePhoto() {
+                const W = canvasElement.width, H = canvasElement.height;
+                const cap = document.createElement('canvas');
+                cap.width = W; cap.height = H;
+                const c = cap.getContext('2d');
+                c.save();
+                c.translate(W, 0); c.scale(-1, 1);      // 套用同一鏡像，同畫面一致
+                c.drawImage(canvasElement, 0, 0);
+                c.drawImage(renderer.domElement, 0, 0);
+                c.restore();
+                c.textAlign = 'center';
+                c.fillStyle = 'rgba(255,255,255,0.92)';
+                c.shadowColor = 'rgba(0,0,0,0.8)'; c.shadowBlur = 8;
+                c.font = `${Math.round(H * 0.045)}px sans-serif`;
+                c.fillText('社畜照相館', W / 2, H * 0.07);
+                c.font = `${Math.round(H * 0.03)}px sans-serif`;
+                c.fillText(QUESTIONS[currentIndex] || '', W / 2, H * 0.95);
+                return await new Promise(r => cap.toBlob(r, 'image/jpeg', 0.9));
+            }
+
+            function downloadBlob(blob) {
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = '社畜照相館.jpg';
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+            }
+
+            async function uploadLatest(blob) {
+                const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
+                const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+                const { error } = await sb.storage.from(SUPABASE_BUCKET).upload('latest.jpg', blob, {
+                    contentType: 'image/jpeg',
+                    upsert: true,
+                    cacheControl: '5'
+                });
+                if (error) throw error;
+            }
+
+            captureBtn.addEventListener('click', async () => {
+                flashEl.style.opacity = '0.9';
+                setTimeout(() => flashEl.style.opacity = '0', 150);
+                const blob = await capturePhoto();
+                if (SUPABASE_URL && SUPABASE_KEY) {
+                    try {
+                        await uploadLatest(blob);
+                        showToast('已上傳！掃場外 QR 即可領取');
+                    } catch (e) {
+                        console.warn(e);
+                        downloadBlob(blob);
+                        showToast('上傳失敗，已改存本機');
+                    }
+                } else {
+                    downloadBlob(blob);
+                    showToast('已儲存去你嘅裝置');
+                }
+            });
+
+            (async () => {
+                const ok = await loadAllMasks();
+                if (!ok) { statusElement.innerText = "ERROR // 沒有任何有效模型"; return; }
+                particleSystem = new THREE.Points(maskAssets[0].geometry, createMaterial(maskAssets[0].texture, maskAssets[0].cfg));
+                applyAsset(0);
+                maskGroup.add(particleSystem);
+                statusElement.innerText = "WAITING // 等待攝像頭權限授權...";
+                initAIEngines();
+                setTimeout(() => questionEl.classList.add('show'), 1500);
+            })();
+
+            function initAIEngines() {
+                const faceMesh = new window.FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
+                faceMesh.setOptions({ maxNumFaces: 4, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+
+                faceMesh.onResults((results) => {
+                    if (!particleSystem || !results.multiFaceLandmarks?.length) return;
+                    const lm = pickFace(results.multiFaceLandmarks);
+                    const aspect = window.innerWidth / window.innerHeight;
+
+                    const nose = lm[1];
+                    const eyeL = lm[33];
+                    const eyeR = lm[263];
+                    trackedNose = { x: nose.x, y: nose.y };
+
+                    const cfg = maskAssets[currentIndex]?.cfg || {};
+                    const scaleMul = cfg.scaleMul ?? 1.0;
+                    const yOff = cfg.yOffset ?? MASK_Y_OFFSET;
+
+                    const anchorX = (lm[234].x + lm[454].x) / 2;
+                    const FRUSTUM_W = FRUSTUM_H * aspect;
+
+                    const targetX = (anchorX - 0.5) * FRUSTUM_W;
+                    const targetY = -(nose.y - 0.5 - yOff) * FRUSTUM_H;
+                    const targetZ = 0;
+
+                    const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
+                    const faceH = Math.abs(lm[152].y - lm[10].y);
+                    const ratioNow = eyeDist / Math.max(1e-4, faceH);
+
+                    const eyeCenterX = (eyeL.x + eyeR.x) / 2;
+                    const eyeCenterY = (eyeL.y + eyeR.y) / 2;
+
+                    const rawRatio = (nose.y - eyeCenterY) / eyeDist;
+                    if (recalibrate) {
+                        pitchBaseline = rawRatio;
+                        scaleRatioBaseline = ratioNow;
+                        baselineCount = BASELINE_FRAMES;
+                        recalibrate = false;
+                    } else if (baselineCount < BASELINE_FRAMES) {
+                        pitchBaseline = (pitchBaseline ?? 0) + rawRatio / BASELINE_FRAMES;
+                        scaleRatioBaseline = (scaleRatioBaseline ?? 0) + ratioNow / BASELINE_FRAMES;
+                        baselineCount++;
+                    }
+                    const base = pitchBaseline ?? rawRatio;
+                    const stableEyeDist = faceH * (scaleRatioBaseline ?? ratioNow);
+
+                    const targetScale = stableEyeDist * SCALE_FACTOR * scaleMul * userSizeMul;
+
+                    const dynamicPitch = -(rawRatio - base) * ROTATION_AMP;
+                    const dynamicYaw   = ((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;
+                    const dynamicRoll  = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x);
+
+                    const targetPitch = dynamicPitch + modelPitchOffset;
+                    const targetYaw   = dynamicYaw   + MODEL_YAW_OFFSET;
+                    const targetRoll  = dynamicRoll  + MODEL_ROLL_OFFSET;
+
+                    maskGroup.position.x += (targetX - maskGroup.position.x) * LERP_SPEED;
+                    maskGroup.position.y += (targetY - maskGroup.position.y) * LERP_SPEED;
+                    maskGroup.position.z += (targetZ - maskGroup.position.z) * LERP_SPEED;
+
+                    const videoAspect = (videoElement.videoWidth && videoElement.videoHeight)
+                        ? videoElement.videoWidth / videoElement.videoHeight : (16 / 9);
+                    const stretch = STRETCH_COMPENSATION ? (videoAspect / aspect) : 1.0;
+                    const newScale = maskGroup.scale.x + (targetScale - maskGroup.scale.x) * LERP_SPEED;
+                    maskGroup.scale.set(newScale, newScale * stretch, newScale);
+
+                    let dPitch = targetPitch - maskGroup.rotation.x;
+                    maskGroup.rotation.x += Math.atan2(Math.sin(dPitch), Math.cos(dPitch)) * LERP_SPEED;
+
+                    let dYaw = targetYaw - maskGroup.rotation.y;
+                    maskGroup.rotation.y += Math.atan2(Math.sin(dYaw), Math.cos(dYaw)) * LERP_SPEED;
+
+                    let dRoll = targetRoll - maskGroup.rotation.z;
+                    maskGroup.rotation.z += Math.atan2(Math.sin(dRoll), Math.cos(dRoll)) * LERP_SPEED;
+                });
+
+                const selfieSegmentation = new window.SelfieSegmentation({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}` });
+                selfieSegmentation.setOptions({ modelSelection: 1 });
+
+                selfieSegmentation.onResults((results) => {
+                    canvasCtx.save();
+                    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+                    canvasCtx.filter = 'blur(15px) brightness(0.85)';
+                    canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+                    canvasCtx.filter = 'none';
+
+                    if (!window._fgCanvas) {
+                        window._fgCanvas = document.createElement('canvas');
+                        window._fgCtx = window._fgCanvas.getContext('2d');
+                    }
+                    const fg = window._fgCanvas, fgCtx = window._fgCtx;
+                    if (fg.width !== canvasElement.width || fg.height !== canvasElement.height) {
+                        fg.width = canvasElement.width;
+                        fg.height = canvasElement.height;
+                    }
+
+                    fgCtx.clearRect(0, 0, fg.width, fg.height);
+                    fgCtx.drawImage(results.image, 0, 0, fg.width, fg.height);
+                    fgCtx.globalCompositeOperation = 'destination-in';
+                    fgCtx.drawImage(results.segmentationMask, 0, 0, fg.width, fg.height);
+                    fgCtx.globalCompositeOperation = 'source-over';
+
+                    canvasCtx.drawImage(fg, 0, 0);
+                    canvasCtx.restore();
+                });
+
+                const cameraUtils = new window.Camera(videoElement, {
+                    onFrame: async () => {
+                        await selfieSegmentation.send({ image: videoElement });
+                        await faceMesh.send({ image: videoElement });
+                    },
+                    width: 1280, height: 720
+                });
+
+                cameraUtils.start().then(() => {
+                    statusElement.innerText = "SYSTEM ACTIVE // 社畜照相館 // 📸 拍低呢張相";
+                    setTimeout(() => { statusElement.style.opacity = '0'; }, 5000);
+                });
+            }
+
+            function animate() {
+                requestAnimationFrame(animate);
+                const t = clock.getElapsedTime();
+                if (particleSystem) {
+                    const u = particleSystem.material.uniforms;
+                    u.uTime.value = t;
+
+                    if (maskAssets.length > 1) {
+                        if (!transition) {
+                            if (t - lastFormedTime >= SWITCH_INTERVAL) {
+                                questionEl.classList.remove('show');
+                                transition = { phase: 'out', start: t, next: (currentIndex + 1) % maskAssets.length };
+                            }
+                        } else if (transition.phase === 'out') {
+                            const p = (t - transition.start) / DISSOLVE_OUT;
+                            u.uDissolve.value = Math.min(p, 1);
+                            if (p >= 1) {
+                                applyAsset(transition.next);
+                                transition = { phase: 'in', start: t };
+                            }
+                        } else {
+                            const p = (t - transition.start) / DISSOLVE_IN;
+                            u.uDissolve.value = 1 - Math.min(p, 1);
+                            if (p >= 1) {
+                                transition = null;
+                                lastFormedTime = t;
+                                questionEl.classList.add('show');
+                            }
+                        }
+                    }
+                }
+                renderer.render(scene, camera);
+            }
+            animate();
         }
-        animate();
     </script>
 </body>
 </html>
