@@ -47,7 +47,8 @@
             position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%);
             padding: 10px 18px; background: rgba(0,0,0,0.75); border-left: 3px solid #00ffcc;
             color: #fff; font-size: 13px; letter-spacing: 1px; z-index: 40;
-            opacity: 0; pointer-events: none; transition: opacity .4s; white-space: nowrap;
+            opacity: 0; pointer-events: none; transition: opacity .4s;
+            max-width: 90vw; text-align: center;
         }
         #toast.show { opacity: 1; }
         /* ===== 浮空問題 ===== */
@@ -156,7 +157,7 @@
         if (IS_CLAIM) startClaimMode(); else startBooth();
 
         /* ############################################################
-           領取頁模式（?claim=1）：固定 URL，只顯示最新一張，自動刷新
+           領取頁模式（?claim=1）
         ############################################################ */
         function startClaimMode() {
             document.body.innerHTML = `
@@ -236,7 +237,7 @@
                 toastEl.textContent = msg;
                 toastEl.classList.add('show');
                 clearTimeout(toastTimer);
-                toastTimer = setTimeout(() => toastEl.classList.remove('show'), 3000);
+                toastTimer = setTimeout(() => toastEl.classList.remove('show'), 5000);
             }
 
             /* 校準鍵 */
@@ -444,7 +445,7 @@
                 u.uTexture.value = a.texture;
                 u.uPointSize.value = a.cfg.pointSize ?? 1.0;
                 u.uNoiseAmp.value = a.cfg.noiseAmp ?? 1.0;
-                questionEl.textContent = QUESTIONS[i] || '';   // 問題跟隨動物
+                questionEl.textContent = QUESTIONS[i] || '';
             }
 
             /* ===== 截圖合成 ===== */
@@ -454,7 +455,7 @@
                 cap.width = W; cap.height = H;
                 const c = cap.getContext('2d');
                 c.save();
-                c.translate(W, 0); c.scale(-1, 1);      // 套用同一鏡像，同畫面一致
+                c.translate(W, 0); c.scale(-1, 1);
                 c.drawImage(canvasElement, 0, 0);
                 c.drawImage(renderer.domElement, 0, 0);
                 c.restore();
@@ -484,7 +485,7 @@
                     upsert: true,
                     cacheControl: '5'
                 });
-                if (error) throw error;
+                if (error) throw new Error(error.message);
             }
 
             captureBtn.addEventListener('click', async () => {
@@ -496,13 +497,14 @@
                         await uploadLatest(blob);
                         showToast('已上傳！掃場外 QR 即可領取');
                     } catch (e) {
-                        console.warn(e);
+                        // 【新】將失敗原因顯示出嚟，方便診斷
+                        console.error('UPLOAD ERROR:', e);
                         downloadBlob(blob);
-                        showToast('上傳失敗，已改存本機');
+                        showToast('上傳失敗：' + (e && e.message ? e.message : e) + '（已改存本機）');
                     }
                 } else {
                     downloadBlob(blob);
-                    showToast('已儲存去你嘅裝置');
+                    showToast('未設定遠端，已儲存去你嘅裝置');
                 }
             });
 
