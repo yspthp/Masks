@@ -102,8 +102,8 @@
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
-        /* ================= 遠端領取設定 ================= */
-        const SUPABASE_URL    = 'https://oeesjjbjiiaqhwvhhnvlip.supabase.co';
+        /* ================= 遠端領取設定（已修正正確 URL） ================= */
+        const SUPABASE_URL    = 'https://oeesljbjiaqhwvhnvlip.supabase.co';
         const SUPABASE_KEY    = 'sb_publishable_PrB4OX0QtliFYXsQNvs5uw_9JdrfmIh';
         const SUPABASE_BUCKET = 'booth';
 
@@ -497,7 +497,6 @@
                         await uploadLatest(blob);
                         showToast('已上傳！掃場外 QR 即可領取');
                     } catch (e) {
-                        // 【新】將失敗原因顯示出嚟，方便診斷
                         console.error('UPLOAD ERROR:', e);
                         downloadBlob(blob);
                         showToast('上傳失敗：' + (e && e.message ? e.message : e) + '（已改存本機）');
