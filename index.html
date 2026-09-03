@@ -102,9 +102,9 @@
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
-        /* ================= 遠端領取設定（已修正正確 URL） ================= */
+        /* ================= 遠端領取設定 =================
+           上傳改經 Edge Function（伺服器端），前端只保留讀取所需資訊 */
         const SUPABASE_URL    = 'https://oeesljbjiaqhwvhnvlip.supabase.co';
-        const SUPABASE_KEY    = 'sb_publishable_PrB4OX0QtliFYXsQNvs5uw_9JdrfmIh';
         const SUPABASE_BUCKET = 'booth';
 
         /* ============ 浮空問題（對應 MODEL_FILES 順序） ============ */
@@ -477,22 +477,29 @@
                 setTimeout(() => URL.revokeObjectURL(a.href), 5000);
             }
 
+            /* 【新】經 Edge Function 伺服器端上傳（繞過 RLS） */
             async function uploadLatest(blob) {
-                const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
-                const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
-                const { error } = await sb.storage.from(SUPABASE_BUCKET).upload('latest.jpg', blob, {
-                    contentType: 'image/jpeg',
-                    upsert: true,
-                    cacheControl: '5'
+                const dataUrl = await new Promise((resolve, reject) => {
+                    const f = new FileReader();
+                    f.onload = () => resolve(f.result);
+                    f.onerror = reject;
+                    f.readAsDataURL(blob);
                 });
-                if (error) throw new Error(error.message);
+                const res = await fetch(SUPABASE_URL + '/functions/v1/upload-latest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: dataUrl })
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const j = await res.json();
+                if (!j.ok) throw new Error(j.error || 'upload failed');
             }
 
             captureBtn.addEventListener('click', async () => {
                 flashEl.style.opacity = '0.9';
                 setTimeout(() => flashEl.style.opacity = '0', 150);
                 const blob = await capturePhoto();
-                if (SUPABASE_URL && SUPABASE_KEY) {
+                if (SUPABASE_URL) {
                     try {
                         await uploadLatest(blob);
                         showToast('已上傳！掃場外 QR 即可領取');
