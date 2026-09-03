@@ -102,9 +102,9 @@
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
-        /* ================= 遠端領取設定 =================
-           上傳改經 Edge Function（伺服器端），前端只保留讀取所需資訊 */
+        /* ================= 遠端領取設定 ================= */
         const SUPABASE_URL    = 'https://oeesljbjiaqhwvhnvlip.supabase.co';
+        const SUPABASE_KEY    = 'sb_publishable_PrB4OX0QtliFYXsQNvs5uw_9JdrfmIh';
         const SUPABASE_BUCKET = 'booth';
 
         /* ============ 浮空問題（對應 MODEL_FILES 順序） ============ */
@@ -477,7 +477,7 @@
                 setTimeout(() => URL.revokeObjectURL(a.href), 5000);
             }
 
-            /* 【新】經 Edge Function 伺服器端上傳（繞過 RLS） */
+            /* 【修正】經 Edge Function 上傳，並附帶 anon key 通過 JWT 驗證 */
             async function uploadLatest(blob) {
                 const dataUrl = await new Promise((resolve, reject) => {
                     const f = new FileReader();
@@ -487,7 +487,11 @@
                 });
                 const res = await fetch(SUPABASE_URL + '/functions/v1/upload-latest', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_KEY,
+                        'Authorization': 'Bearer ' + SUPABASE_KEY
+                    },
                     body: JSON.stringify({ image: dataUrl })
                 });
                 if (!res.ok) throw new Error('HTTP ' + res.status);
