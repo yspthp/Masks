@@ -63,7 +63,15 @@
         }
         #question.show { opacity: 1; }
         @keyframes floatY { 0%,100% { margin-top: 0; } 50% { margin-top: -14px; } }
-    </style>
+            /* ===== V2 visual polish: additive only ===== */
+        body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:2; background:radial-gradient(circle at 50% 42%, rgba(0,255,204,.08), transparent 34%), linear-gradient(135deg, rgba(5,5,8,.18), rgba(5,5,8,.52)); mix-blend-mode:screen; }
+        #status { border-left-color:#d8b36a; background:rgba(8,10,14,.52); color:rgba(255,255,255,.78); text-transform:uppercase; transition:opacity .8s, border-color .8s; }
+        #question { max-width:760px; font-weight:300; text-shadow:0 0 22px rgba(0,255,204,.24), 0 2px 12px rgba(0,0,0,.72); }
+        #question::after { content:""; display:block; width:42px; height:1px; margin:14px auto 0; background:currentColor; opacity:.55; }
+        #captureBtn,#uiToggle { box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 8px 30px rgba(0,0,0,.28); transition:transform .2s, background .2s, box-shadow .2s; }
+        #captureBtn:hover,#uiToggle:hover { transform:translateY(-2px) scale(1.04); background:rgba(0,255,204,.16); box-shadow:0 0 24px rgba(0,255,204,.2); }
+        #webgl-container::after { content:""; position:absolute; inset:0; pointer-events:none; background:radial-gradient(ellipse at center, transparent 48%, rgba(0,0,0,.26) 100%); }
+        @media (max-width:600px) { #question { top:12%; font-size:clamp(15px,4.6vw,21px); letter-spacing:2px; } #status{top:12px;left:12px;font-size:11px;} }</style>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
@@ -103,7 +111,7 @@
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
         /* ================= 版本標籤 ================= */
-        const BUILD = '0912b';
+        const BUILD = '0912b-v2';
 
         /* ================= 遠端領取設定 ================= */
         const SUPABASE_URL    = 'https://oeesljbjiaqhwvhnvlip.supabase.co';
@@ -192,7 +200,15 @@
                     #claimLine1 { margin-top:20px; color:rgba(255,255,255,.92); font-size:15px;
                                   letter-spacing:2px; line-height:1.9; }
                     #claimLine2 { margin-top:10px; color:#00ffcc; font-size:15px; letter-spacing:3px; }
-                </style>
+                        /* ===== V2 visual polish: additive only ===== */
+        body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:2; background:radial-gradient(circle at 50% 42%, rgba(0,255,204,.08), transparent 34%), linear-gradient(135deg, rgba(5,5,8,.18), rgba(5,5,8,.52)); mix-blend-mode:screen; }
+        #status { border-left-color:#d8b36a; background:rgba(8,10,14,.52); color:rgba(255,255,255,.78); text-transform:uppercase; transition:opacity .8s, border-color .8s; }
+        #question { max-width:760px; font-weight:300; text-shadow:0 0 22px rgba(0,255,204,.24), 0 2px 12px rgba(0,0,0,.72); }
+        #question::after { content:""; display:block; width:42px; height:1px; margin:14px auto 0; background:currentColor; opacity:.55; }
+        #captureBtn,#uiToggle { box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 8px 30px rgba(0,0,0,.28); transition:transform .2s, background .2s, box-shadow .2s; }
+        #captureBtn:hover,#uiToggle:hover { transform:translateY(-2px) scale(1.04); background:rgba(0,255,204,.16); box-shadow:0 0 24px rgba(0,255,204,.2); }
+        #webgl-container::after { content:""; position:absolute; inset:0; pointer-events:none; background:radial-gradient(ellipse at center, transparent 48%, rgba(0,0,0,.26) 100%); }
+        @media (max-width:600px) { #question { top:12%; font-size:clamp(15px,4.6vw,21px); letter-spacing:2px; } #status{top:12px;left:12px;font-size:11px;} }</style>
                 <div id="claimWrap">
                     <h1>社畜照相館</h1>
                     <div id="claimSub">領取你嘅職員照</div>
@@ -460,6 +476,7 @@
             }
 
             function applyAsset(i) {
+                document.documentElement.style.setProperty('--mask-index', i);
                 currentIndex = i;
                 const a = maskAssets[i];
                 particleSystem.geometry = a.geometry;
@@ -632,7 +649,7 @@
 
                     const targetScale = stableEyeDist * SCALE_FACTOR * scaleMul * userSizeMul;
 
-                    const dynamicPitch = (rawRatio - base) * ROTATION_AMP;
+                    const dynamicPitch = -(rawRatio - base) * ROTATION_AMP;
                     const dynamicYaw   = THREE.MathUtils.clamp(((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP, -0.8, 0.8);
                     /* 【修正 Bug 1】roll 加負號：鏡像管線下先至同頭部同向 */
                     const dynamicRoll  = THREE.MathUtils.clamp(-Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x), -0.4, 0.4) * Math.min(1, frontalness);
