@@ -102,15 +102,15 @@
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
-        /* ================= 版本標籤（確認部署／快取用） ================= */
-        const BUILD = '0912a';
+        /* ================= 版本標籤 ================= */
+        const BUILD = '0912b';
 
         /* ================= 遠端領取設定 ================= */
         const SUPABASE_URL    = 'https://oeesljbjiaqhwvhnvlip.supabase.co';
         const SUPABASE_KEY    = 'sb_publishable_PrB4OX0QtliFYXsQNvs5uw_9JdrfmIh';
         const SUPABASE_BUCKET = 'booth';
 
-        /* ============ 素臉開場文案（依序出現） ============ */
+        /* ============ 素臉開場文案 ============ */
         const INTRO_LINES = [
             '歡迎加入本公司的大家庭成為一名社畜',
             '來拍張職員照吧',
@@ -119,13 +119,13 @@
         const INTRO_DURATIONS = [2.6, 2.6, 3.2];
         const IDLE_RESET_MS = 3000;
 
-        /* ============ 浮空問題（booth 內・覺察） ============ */
+        /* ============ 浮空問題 ============ */
         const QUESTIONS = [
-            '觀察了這麼久，你對這世界足夠了解了嗎？',                       // 貓頭鷹
-            '有沒有一刻，你想放下刺來，讓別人可以靠近？',                   // 刺蝟
-            '在意別人的目光，再累也不敢倒下來嗎？',                         // 獅子
-            '每次答應別人說「沒有問題」，是不敢有問題嗎？',                 // 兔子
-            '不斷地跑，不斷儲存。什麼時候能停下來？',                       // 倉鼠
+            '觀察了這麼久，你對這世界足夠了解了嗎？',
+            '有沒有一刻，你想放下刺來，讓別人可以靠近？',
+            '在意別人的目光，再累也不敢倒下來嗎？',
+            '每次答應別人說「沒有問題」，是不敢有問題嗎？',
+            '不斷地跑，不斷儲存。什麼時候能停下來？',
         ];
 
         /* ============ 領取頁通用回應 ============ */
@@ -168,12 +168,12 @@
         let pitchOptionIndex = 0;
         let modelPitchOffset = THREE.MathUtils.degToRad(PITCH_OPTIONS[0]);
 
-        /* ================= 模式分流：領取頁 vs Booth ================= */
+        /* ================= 模式分流 ================= */
         const IS_CLAIM = new URLSearchParams(location.search).has('claim');
         if (IS_CLAIM) startClaimMode(); else startBooth();
 
         /* ############################################################
-           領取頁模式（?claim=1）：通用回應
+           領取頁模式（?claim=1）
         ############################################################ */
         function startClaimMode() {
             document.body.innerHTML = `
@@ -225,7 +225,6 @@
         ############################################################ */
         function startBooth() {
 
-            /* 即時大小倍率（每裝置記憶） */
             let userSizeMul = 1.0;
             try { userSizeMul = parseFloat(localStorage.getItem('maskSizeMul')) || 1.0; } catch (e) {}
             const sizeSlider = document.getElementById('sizeSlider');
@@ -259,14 +258,12 @@
                 toastTimer = setTimeout(() => toastEl.classList.remove('show'), 5000);
             }
 
-            /* ===== 流程狀態 ===== */
             let phase = 'intro';
             let introStarted = false;
             let introStart = 0;
             let introLineIndex = -1;
             let lastFaceTime = 0;
 
-            /* 校準鍵 */
             let pitchBaseline = null;
             let scaleRatioBaseline = null;
             let baselineCount = 0;
@@ -282,7 +279,6 @@
                 }
             });
 
-            /* 多人 face 選擇 */
             let trackedNose = null;
             function pickFace(faces) {
                 let largest = null, largestSize = 0;
@@ -598,10 +594,11 @@
                     const FRUSTUM_W = FRUSTUM_H * aspect;
 
                     const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
-                    const faceH = Math.abs(lm[152].y - lm[10].y);
+                    /* 【修正 Bug 2】面高改用真實 2D 距離：對 roll／yaw 都不變 */
+                    const faceH = Math.hypot(lm[152].x - lm[10].x, lm[152].y - lm[10].y);
                     const ratioNow = eyeDist / Math.max(1e-4, faceH);
 
-                    /* ===== 【新】正面度門控：側臉太誇張時唔信追蹤數據 ===== */
+                    /* 正面度（純 yaw 指標） */
                     const frontalness = THREE.MathUtils.clamp(ratioNow / (scaleRatioBaseline || ratioNow), 0, 1.2);
                     const reliable = !scaleRatioBaseline || frontalness > 0.6;
 
@@ -616,7 +613,7 @@
                             baselineCount = BASELINE_FRAMES;
                         }
                         recalibrate = false;
-                    } else if (reliable && baselineCount < BASELINE_FRAMES) {
+                    } else if (baselineCount < BASELINE_FRAMES && frontalness > 0.85) {
                         pitchBaseline = (pitchBaseline ?? 0) + rawRatio / BASELINE_FRAMES;
                         scaleRatioBaseline = (scaleRatioBaseline ?? 0) + ratioNow / BASELINE_FRAMES;
                         baselineCount++;
@@ -624,9 +621,8 @@
                     const base = pitchBaseline ?? rawRatio;
                     const stableEyeDist = faceH * (scaleRatioBaseline ?? ratioNow);
 
-                    if (!reliable) return;   // 【新】凍結位置／旋轉／大小更新
+                    if (!reliable) return;
 
-                    /* 錨點穩定化：側臉時向眼中心收斂 */
                     const w = THREE.MathUtils.clamp((frontalness - 0.6) / 0.4, 0, 1);
                     const stableAnchorX = anchorX * w + eyeCenterX * (1 - w);
 
@@ -638,7 +634,8 @@
 
                     const dynamicPitch = -(rawRatio - base) * ROTATION_AMP;
                     const dynamicYaw   = THREE.MathUtils.clamp(((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP, -0.8, 0.8);
-                    const dynamicRoll  = THREE.MathUtils.clamp(Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x), -0.4, 0.4) * Math.min(1, frontalness);
+                    /* 【修正 Bug 1】roll 加負號：鏡像管線下先至同頭部同向 */
+                    const dynamicRoll  = THREE.MathUtils.clamp(-Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x), -0.4, 0.4) * Math.min(1, frontalness);
 
                     const targetPitch = dynamicPitch + modelPitchOffset;
                     const targetYaw   = dynamicYaw   + MODEL_YAW_OFFSET;
