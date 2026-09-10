@@ -102,6 +102,9 @@
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
+        /* ================= 版本標籤（確認部署／快取用） ================= */
+        const BUILD = '0912a';
+
         /* ================= 遠端領取設定 ================= */
         const SUPABASE_URL    = 'https://oeesljbjiaqhwvhnvlip.supabase.co';
         const SUPABASE_KEY    = 'sb_publishable_PrB4OX0QtliFYXsQNvs5uw_9JdrfmIh';
@@ -113,8 +116,8 @@
             '來拍張職員照吧',
             '哪一張面具，是你戴起來最習慣的呢？',
         ];
-        const INTRO_DURATIONS = [2.6, 2.6, 3.2];   // 每句停留秒數
-        const IDLE_RESET_MS = 3000;                // 鏡頭前無人超過 3 秒 → 重置
+        const INTRO_DURATIONS = [2.6, 2.6, 3.2];
+        const IDLE_RESET_MS = 3000;
 
         /* ============ 浮空問題（booth 內・覺察） ============ */
         const QUESTIONS = [
@@ -256,12 +259,12 @@
                 toastTimer = setTimeout(() => toastEl.classList.remove('show'), 5000);
             }
 
-            /* ===== 流程狀態：素臉開場 → 面具輪播；無人 3 秒重置 ===== */
-            let phase = 'intro';          // 'intro' | 'cycle'
+            /* ===== 流程狀態 ===== */
+            let phase = 'intro';
             let introStarted = false;
             let introStart = 0;
             let introLineIndex = -1;
-            let lastFaceTime = 0;         // performance.now() of last face detection
+            let lastFaceTime = 0;
 
             /* 校準鍵 */
             let pitchBaseline = null;
@@ -315,7 +318,7 @@
             camera.position.z = 25;
             const renderer = new THREE.WebGLRenderer({
                 antialias: true, alpha: true,
-                preserveDrawingBuffer: true   // 【截圖需要】
+                preserveDrawingBuffer: true
             });
             renderer.setSize(window.innerWidth, window.innerHeight);
             container.appendChild(renderer.domElement);
@@ -470,7 +473,6 @@
                 u.uNoiseAmp.value = a.cfg.noiseAmp ?? 1.0;
             }
 
-            /* ===== 重置：換參加者／開機 ===== */
             function resetExperience() {
                 phase = 'intro';
                 introStarted = false;
@@ -479,7 +481,6 @@
                 maskGroup.visible = false;
                 questionEl.classList.remove('show');
                 questionEl.textContent = '';
-                // 新參加者 → 重新校準
                 pitchBaseline = null;
                 scaleRatioBaseline = null;
                 baselineCount = 0;
@@ -491,7 +492,6 @@
                 }
             }
 
-            /* ===== 截圖合成 ===== */
             async function capturePhoto() {
                 const W = canvasElement.width, H = canvasElement.height;
                 const cap = document.createElement('canvas');
@@ -520,7 +520,6 @@
                 setTimeout(() => URL.revokeObjectURL(a.href), 5000);
             }
 
-            /* 經 Edge Function 上傳（附 anon key 通過 JWT 驗證） */
             async function uploadLatest(blob) {
                 const dataUrl = await new Promise((resolve, reject) => {
                     const f = new FileReader();
@@ -571,7 +570,7 @@
                 particleSystem = new THREE.Points(maskAssets[0].geometry, createMaterial(maskAssets[0].texture, maskAssets[0].cfg));
                 applyAsset(0);
                 maskGroup.add(particleSystem);
-                maskGroup.visible = false;   // 【素臉開場】面具先隱藏
+                maskGroup.visible = false;
                 statusElement.innerText = "WAITING // 等待攝像頭權限授權...";
                 initAIEngines();
             })();
@@ -582,7 +581,7 @@
 
                 faceMesh.onResults((results) => {
                     if (!particleSystem || !results.multiFaceLandmarks?.length) return;
-                    lastFaceTime = performance.now();   // 【無人檢測】
+                    lastFaceTime = performance.now();
                     const lm = pickFace(results.multiFaceLandmarks);
                     const aspect = window.innerWidth / window.innerHeight;
 
@@ -598,24 +597,26 @@
                     const anchorX = (lm[234].x + lm[454].x) / 2;
                     const FRUSTUM_W = FRUSTUM_H * aspect;
 
-                    const targetX = (anchorX - 0.5) * FRUSTUM_W;
-                    const targetY = -(nose.y - 0.5 - yOff) * FRUSTUM_H;
-                    const targetZ = 0;
-
                     const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
                     const faceH = Math.abs(lm[152].y - lm[10].y);
                     const ratioNow = eyeDist / Math.max(1e-4, faceH);
+
+                    /* ===== 【新】正面度門控：側臉太誇張時唔信追蹤數據 ===== */
+                    const frontalness = THREE.MathUtils.clamp(ratioNow / (scaleRatioBaseline || ratioNow), 0, 1.2);
+                    const reliable = !scaleRatioBaseline || frontalness > 0.6;
 
                     const eyeCenterX = (eyeL.x + eyeR.x) / 2;
                     const eyeCenterY = (eyeL.y + eyeR.y) / 2;
 
                     const rawRatio = (nose.y - eyeCenterY) / eyeDist;
                     if (recalibrate) {
-                        pitchBaseline = rawRatio;
-                        scaleRatioBaseline = ratioNow;
-                        baselineCount = BASELINE_FRAMES;
+                        if (reliable) {
+                            pitchBaseline = rawRatio;
+                            scaleRatioBaseline = ratioNow;
+                            baselineCount = BASELINE_FRAMES;
+                        }
                         recalibrate = false;
-                    } else if (baselineCount < BASELINE_FRAMES) {
+                    } else if (reliable && baselineCount < BASELINE_FRAMES) {
                         pitchBaseline = (pitchBaseline ?? 0) + rawRatio / BASELINE_FRAMES;
                         scaleRatioBaseline = (scaleRatioBaseline ?? 0) + ratioNow / BASELINE_FRAMES;
                         baselineCount++;
@@ -623,11 +624,21 @@
                     const base = pitchBaseline ?? rawRatio;
                     const stableEyeDist = faceH * (scaleRatioBaseline ?? ratioNow);
 
+                    if (!reliable) return;   // 【新】凍結位置／旋轉／大小更新
+
+                    /* 錨點穩定化：側臉時向眼中心收斂 */
+                    const w = THREE.MathUtils.clamp((frontalness - 0.6) / 0.4, 0, 1);
+                    const stableAnchorX = anchorX * w + eyeCenterX * (1 - w);
+
+                    const targetX = (stableAnchorX - 0.5) * FRUSTUM_W;
+                    const targetY = -(nose.y - 0.5 - yOff) * FRUSTUM_H;
+                    const targetZ = 0;
+
                     const targetScale = stableEyeDist * SCALE_FACTOR * scaleMul * userSizeMul;
 
                     const dynamicPitch = -(rawRatio - base) * ROTATION_AMP;
-                    const dynamicYaw   = ((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP;
-                    const dynamicRoll  = Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x);
+                    const dynamicYaw   = THREE.MathUtils.clamp(((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP, -0.8, 0.8);
+                    const dynamicRoll  = THREE.MathUtils.clamp(Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x), -0.4, 0.4) * Math.min(1, frontalness);
 
                     const targetPitch = dynamicPitch + modelPitchOffset;
                     const targetYaw   = dynamicYaw   + MODEL_YAW_OFFSET;
@@ -693,7 +704,8 @@
                 });
 
                 cameraUtils.start().then(() => {
-                    statusElement.innerText = "SYSTEM ACTIVE // 社畜照相館 // 站入鏡頭即開始";
+                    statusElement.innerText = `SYSTEM ACTIVE // build ${BUILD} // 站入鏡頭即開始`;
+                    console.log('BUILD:', BUILD);
                     setTimeout(() => { statusElement.style.opacity = '0'; }, 5000);
                 });
             }
@@ -707,7 +719,6 @@
                 const u = particleSystem.material.uniforms;
                 u.uTime.value = t;
 
-                /* ===== 無人超過 3 秒 → 重置（換參加者） ===== */
                 const idle = lastFaceTime > 0 && (nowMs - lastFaceTime) > IDLE_RESET_MS;
                 if (idle && !(phase === 'intro' && !introStarted)) {
                     resetExperience();
@@ -716,7 +727,6 @@
                 const facePresent = lastFaceTime > 0 && (nowMs - lastFaceTime) < 1000;
 
                 if (phase === 'intro') {
-                    /* ===== 素臉開場：有人先至開始倒數 ===== */
                     if (facePresent && !introStarted) {
                         introStarted = true;
                         introStart = nowMs;
@@ -731,7 +741,6 @@
                             if (el < acc) { idx = i; break; }
                         }
                         if (idx >= INTRO_LINES.length) {
-                            // 開場完畢 → 開展面具輪播
                             phase = 'cycle';
                             maskGroup.visible = true;
                             lastFormedTime = t;
@@ -747,7 +756,6 @@
                         }
                     }
                 } else {
-                    /* ===== 面具輪播（原有狀態機） ===== */
                     if (!transition) {
                         if (t - lastFormedTime >= SWITCH_INTERVAL) {
                             questionEl.classList.remove('show');
