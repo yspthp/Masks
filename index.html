@@ -51,7 +51,7 @@
             max-width: 90vw; text-align: center;
         }
         #toast.show { opacity: 1; }
-        /* ===== 浮空問題 ===== */
+        /* ===== 浮空文字（開場＋問題） ===== */
         #question {
             position: absolute; left: 50%; top: 10%; transform: translateX(-50%);
             width: 90%; text-align: center; pointer-events: none; z-index: 5;
@@ -107,7 +107,16 @@
         const SUPABASE_KEY    = 'sb_publishable_PrB4OX0QtliFYXsQNvs5uw_9JdrfmIh';
         const SUPABASE_BUCKET = 'booth';
 
-        /* ============ 浮空問題（對應 MODEL_FILES 順序） ============ */
+        /* ============ 素臉開場文案（依序出現） ============ */
+        const INTRO_LINES = [
+            '歡迎加入本公司的大家庭成為一名社畜',
+            '來拍張職員照吧',
+            '哪一張面具，是你戴起來最習慣的呢？',
+        ];
+        const INTRO_DURATIONS = [2.6, 2.6, 3.2];   // 每句停留秒數
+        const IDLE_RESET_MS = 3000;                // 鏡頭前無人超過 3 秒 → 重置
+
+        /* ============ 浮空問題（booth 內・覺察） ============ */
         const QUESTIONS = [
             '觀察了這麼久，你對這世界足夠了解了嗎？',                       // 貓頭鷹
             '有沒有一刻，你想放下刺來，讓別人可以靠近？',                   // 刺蝟
@@ -115,6 +124,10 @@
             '每次答應別人說「沒有問題」，是不敢有問題嗎？',                 // 兔子
             '不斷地跑，不斷儲存。什麼時候能停下來？',                       // 倉鼠
         ];
+
+        /* ============ 領取頁通用回應 ============ */
+        const CLAIM_LINE_1 = '在你成為任何角色之前，你首先是你。';
+        const CLAIM_LINE_2 = '神所看重的，是真實的你。';
 
         /* ================= 面具清單 ================= */
         const MODEL_FILES = [
@@ -157,7 +170,7 @@
         if (IS_CLAIM) startClaimMode(); else startBooth();
 
         /* ############################################################
-           領取頁模式（?claim=1）
+           領取頁模式（?claim=1）：通用回應
         ############################################################ */
         function startClaimMode() {
             document.body.innerHTML = `
@@ -167,14 +180,15 @@
                     #claimWrap { text-align:center; padding:24px; max-width:92vw; }
                     h1 { font-size:22px; letter-spacing:6px; color:#00ffcc; }
                     #claimSub { color:#888; font-size:12px; letter-spacing:2px; margin-top:4px; }
-                    #claimImg { max-width:92vw; max-height:62vh; border:2px solid #00ffcc;
+                    #claimImg { max-width:92vw; max-height:56vh; border:2px solid #00ffcc;
                                 border-radius:10px; background:#111; margin-top:14px; }
-                    #claimDownload { display:inline-block; margin-top:16px; padding:10px 26px;
+                    #claimDownload { display:inline-block; margin-top:14px; padding:10px 26px;
                                      border:1px solid #00ffcc; color:#00ffcc; text-decoration:none;
                                      letter-spacing:2px; border-radius:6px; }
                     #claimHint { color:#888; font-size:12px; letter-spacing:1px; }
-                    #claimQuote { margin-top:22px; color:rgba(255,255,255,.85); font-size:14px;
-                                  letter-spacing:2px; line-height:2; }
+                    #claimLine1 { margin-top:20px; color:rgba(255,255,255,.92); font-size:15px;
+                                  letter-spacing:2px; line-height:1.9; }
+                    #claimLine2 { margin-top:10px; color:#00ffcc; font-size:15px; letter-spacing:3px; }
                 </style>
                 <div id="claimWrap">
                     <h1>社畜照相館</h1>
@@ -182,16 +196,18 @@
                     <img id="claimImg" alt="最新照片">
                     <p id="claimHint">頁面只保留最新一張 · 每 4 秒自動刷新</p>
                     <a id="claimDownload" download="社畜照相館.jpg">下載照片</a>
-                    <p id="claimQuote">你不只是你的角色。在成為任何角色之前，你首先是你自己。</p>
+                    <div id="claimLine1">${CLAIM_LINE_1}</div>
+                    <div id="claimLine2">${CLAIM_LINE_2}</div>
                 </div>`;
             const img  = document.getElementById('claimImg');
             const dl   = document.getElementById('claimDownload');
             const hint = document.getElementById('claimHint');
             if (!SUPABASE_URL) { hint.textContent = '未設定遠端領取（SUPABASE_URL 為空）'; return; }
-            const base = `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_BUCKET}/latest.jpg`;
+
+            const baseImg = `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_BUCKET}/latest.jpg`;
             let got = false;
             const refresh = () => {
-                const u = base + '?t=' + Date.now();
+                const u = baseImg + '?t=' + Date.now();
                 const probe = new Image();
                 probe.onload = () => { got = true; img.src = u; dl.href = u; };
                 probe.onerror = () => { if (!got) hint.textContent = '未有照片——去 booth 影一張啦！'; };
@@ -239,6 +255,13 @@
                 clearTimeout(toastTimer);
                 toastTimer = setTimeout(() => toastEl.classList.remove('show'), 5000);
             }
+
+            /* ===== 流程狀態：素臉開場 → 面具輪播；無人 3 秒重置 ===== */
+            let phase = 'intro';          // 'intro' | 'cycle'
+            let introStarted = false;
+            let introStart = 0;
+            let introLineIndex = -1;
+            let lastFaceTime = 0;         // performance.now() of last face detection
 
             /* 校準鍵 */
             let pitchBaseline = null;
@@ -445,7 +468,27 @@
                 u.uTexture.value = a.texture;
                 u.uPointSize.value = a.cfg.pointSize ?? 1.0;
                 u.uNoiseAmp.value = a.cfg.noiseAmp ?? 1.0;
-                questionEl.textContent = QUESTIONS[i] || '';
+            }
+
+            /* ===== 重置：換參加者／開機 ===== */
+            function resetExperience() {
+                phase = 'intro';
+                introStarted = false;
+                introLineIndex = -1;
+                transition = null;
+                maskGroup.visible = false;
+                questionEl.classList.remove('show');
+                questionEl.textContent = '';
+                // 新參加者 → 重新校準
+                pitchBaseline = null;
+                scaleRatioBaseline = null;
+                baselineCount = 0;
+                trackedNose = null;
+                if (particleSystem) {
+                    currentIndex = 0;
+                    applyAsset(0);
+                    particleSystem.material.uniforms.uDissolve.value = 0;
+                }
             }
 
             /* ===== 截圖合成 ===== */
@@ -477,7 +520,7 @@
                 setTimeout(() => URL.revokeObjectURL(a.href), 5000);
             }
 
-            /* 【修正】經 Edge Function 上傳，並附帶 anon key 通過 JWT 驗證 */
+            /* 經 Edge Function 上傳（附 anon key 通過 JWT 驗證） */
             async function uploadLatest(blob) {
                 const dataUrl = await new Promise((resolve, reject) => {
                     const f = new FileReader();
@@ -492,7 +535,7 @@
                         'apikey': SUPABASE_KEY,
                         'Authorization': 'Bearer ' + SUPABASE_KEY
                     },
-                    body: JSON.stringify({ image: dataUrl })
+                    body: JSON.stringify({ image: dataUrl, index: currentIndex })
                 });
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 const j = await res.json();
@@ -500,6 +543,10 @@
             }
 
             captureBtn.addEventListener('click', async () => {
+                if (phase !== 'cycle') {
+                    showToast('面具未戴上——先歡迎自己入職 😉');
+                    return;
+                }
                 flashEl.style.opacity = '0.9';
                 setTimeout(() => flashEl.style.opacity = '0', 150);
                 const blob = await capturePhoto();
@@ -514,7 +561,7 @@
                     }
                 } else {
                     downloadBlob(blob);
-                    showToast('未設定遠端，已儲存去你嘅裝置');
+                    showToast('已儲存去你嘅裝置');
                 }
             });
 
@@ -524,9 +571,9 @@
                 particleSystem = new THREE.Points(maskAssets[0].geometry, createMaterial(maskAssets[0].texture, maskAssets[0].cfg));
                 applyAsset(0);
                 maskGroup.add(particleSystem);
+                maskGroup.visible = false;   // 【素臉開場】面具先隱藏
                 statusElement.innerText = "WAITING // 等待攝像頭權限授權...";
                 initAIEngines();
-                setTimeout(() => questionEl.classList.add('show'), 1500);
             })();
 
             function initAIEngines() {
@@ -535,6 +582,7 @@
 
                 faceMesh.onResults((results) => {
                     if (!particleSystem || !results.multiFaceLandmarks?.length) return;
+                    lastFaceTime = performance.now();   // 【無人檢測】
                     const lm = pickFace(results.multiFaceLandmarks);
                     const aspect = window.innerWidth / window.innerHeight;
 
@@ -645,7 +693,7 @@
                 });
 
                 cameraUtils.start().then(() => {
-                    statusElement.innerText = "SYSTEM ACTIVE // 社畜照相館 // 📸 拍低呢張相";
+                    statusElement.innerText = "SYSTEM ACTIVE // 社畜照相館 // 站入鏡頭即開始";
                     setTimeout(() => { statusElement.style.opacity = '0'; }, 5000);
                 });
             }
@@ -653,34 +701,77 @@
             function animate() {
                 requestAnimationFrame(animate);
                 const t = clock.getElapsedTime();
-                if (particleSystem) {
-                    const u = particleSystem.material.uniforms;
-                    u.uTime.value = t;
+                const nowMs = performance.now();
+                if (!particleSystem) { renderer.render(scene, camera); return; }
 
-                    if (maskAssets.length > 1) {
-                        if (!transition) {
-                            if (t - lastFormedTime >= SWITCH_INTERVAL) {
-                                questionEl.classList.remove('show');
-                                transition = { phase: 'out', start: t, next: (currentIndex + 1) % maskAssets.length };
-                            }
-                        } else if (transition.phase === 'out') {
-                            const p = (t - transition.start) / DISSOLVE_OUT;
-                            u.uDissolve.value = Math.min(p, 1);
-                            if (p >= 1) {
-                                applyAsset(transition.next);
-                                transition = { phase: 'in', start: t };
-                            }
-                        } else {
-                            const p = (t - transition.start) / DISSOLVE_IN;
-                            u.uDissolve.value = 1 - Math.min(p, 1);
-                            if (p >= 1) {
-                                transition = null;
-                                lastFormedTime = t;
+                const u = particleSystem.material.uniforms;
+                u.uTime.value = t;
+
+                /* ===== 無人超過 3 秒 → 重置（換參加者） ===== */
+                const idle = lastFaceTime > 0 && (nowMs - lastFaceTime) > IDLE_RESET_MS;
+                if (idle && !(phase === 'intro' && !introStarted)) {
+                    resetExperience();
+                }
+
+                const facePresent = lastFaceTime > 0 && (nowMs - lastFaceTime) < 1000;
+
+                if (phase === 'intro') {
+                    /* ===== 素臉開場：有人先至開始倒數 ===== */
+                    if (facePresent && !introStarted) {
+                        introStarted = true;
+                        introStart = nowMs;
+                        introLineIndex = 0;
+                        questionEl.textContent = INTRO_LINES[0];
+                        questionEl.classList.add('show');
+                    } else if (introStarted) {
+                        const el = (nowMs - introStart) / 1000;
+                        let acc = 0, idx = INTRO_LINES.length;
+                        for (let i = 0; i < INTRO_LINES.length; i++) {
+                            acc += INTRO_DURATIONS[i];
+                            if (el < acc) { idx = i; break; }
+                        }
+                        if (idx >= INTRO_LINES.length) {
+                            // 開場完畢 → 開展面具輪播
+                            phase = 'cycle';
+                            maskGroup.visible = true;
+                            lastFormedTime = t;
+                            questionEl.textContent = QUESTIONS[currentIndex] || '';
+                            questionEl.classList.add('show');
+                        } else if (idx !== introLineIndex) {
+                            introLineIndex = idx;
+                            questionEl.classList.remove('show');
+                            setTimeout(() => {
+                                questionEl.textContent = INTRO_LINES[idx];
                                 questionEl.classList.add('show');
-                            }
+                            }, 350);
+                        }
+                    }
+                } else {
+                    /* ===== 面具輪播（原有狀態機） ===== */
+                    if (!transition) {
+                        if (t - lastFormedTime >= SWITCH_INTERVAL) {
+                            questionEl.classList.remove('show');
+                            transition = { phase: 'out', start: t, next: (currentIndex + 1) % maskAssets.length };
+                        }
+                    } else if (transition.phase === 'out') {
+                        const p = (t - transition.start) / DISSOLVE_OUT;
+                        u.uDissolve.value = Math.min(p, 1);
+                        if (p >= 1) {
+                            applyAsset(transition.next);
+                            transition = { phase: 'in', start: t };
+                        }
+                    } else {
+                        const p = (t - transition.start) / DISSOLVE_IN;
+                        u.uDissolve.value = 1 - Math.min(p, 1);
+                        if (p >= 1) {
+                            transition = null;
+                            lastFormedTime = t;
+                            questionEl.textContent = QUESTIONS[currentIndex] || '';
+                            questionEl.classList.add('show');
                         }
                     }
                 }
+
                 renderer.render(scene, camera);
             }
             animate();
