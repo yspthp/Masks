@@ -108,8 +108,8 @@
         </div>
         <button id="uiToggle" title="調整面具大小">⚙</button>
     </div>
-    <button id="fsBtn" title="切換全螢幕">⛶</button>
-    <button id="captureBtn" title="拍下呢張相（或按空白鍵）">📸</button>
+    <button id="fsBtn" title="切換全螢幕" tabindex="-1">⛶</button>
+    <button id="captureBtn" title="拍下呢張相（或按 Enter 鍵）">📸</button>
     <div id="flash"></div>
     <div id="toast"></div>
 
@@ -213,8 +213,8 @@
         #status { border-left-color:#d8b36a; background:rgba(8,10,14,.52); color:rgba(255,255,255,.78); text-transform:uppercase; transition:opacity .8s, border-color .8s; }
         #question { max-width:760px; font-weight:300; text-shadow:0 0 22px rgba(0,255,204,.24), 0 2px 12px rgba(0,0,0,.72); }
         #question::after { content:""; display:block; width:42px; height:1px; margin:14px auto 0; background:currentColor; opacity:.55; }
-        #captureBtn,#uiToggle { box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 8px 30px rgba(0,0,0,.28); transition:transform .2s, background .2s, box-shadow .2s; }
-        #captureBtn:hover,#uiToggle:hover { transform:translateY(-2px) scale(1.04); background:rgba(0,255,204,.16); box-shadow:0 0 24px rgba(0,255,204,.2); }
+        #captureBtn,#uiToggle,#fsBtn { box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 8px 30px rgba(0,0,0,.28); transition:transform .2s, background .2s, box-shadow .2s; }
+        #captureBtn:hover,#uiToggle:hover,#fsBtn:hover { transform:translateY(-2px) scale(1.04); background:rgba(0,255,204,.16); box-shadow:0 0 24px rgba(0,255,204,.2); }
         #webgl-container::after { content:""; position:absolute; inset:0; pointer-events:none; background:radial-gradient(ellipse at center, transparent 48%, rgba(0,0,0,.26) 100%); }
         @media (max-width:600px) { #question { top:12%; font-size:clamp(15px,4.6vw,21px); letter-spacing:2px; } #status{top:12px;left:12px;font-size:11px;} }</style>
                 <div id="claimWrap">
@@ -262,7 +262,10 @@
                 sizeVal.textContent = Math.round(userSizeMul * 100) + '%';
                 try { localStorage.setItem('maskSizeMul', String(userSizeMul)); } catch (e) {}
             });
-            uiToggle.addEventListener('click', () => uiPanel.classList.toggle('open'));
+            uiToggle.addEventListener('click', () => {
+                uiToggle.blur();
+                uiPanel.classList.toggle('open');
+            });
 
             const videoElement = document.getElementById('input_video');
             const canvasElement = document.getElementById('output_canvas');
@@ -293,6 +296,7 @@
             let baselineCount = 0;
             const BASELINE_FRAMES = 45;
             let recalibrate = false;
+            // 捕獲階段（useCapture=true）優先攔截 Enter，防止焦點按鈕（如全螢幕按鈕）被瀏覽器預設觸發
             window.addEventListener('keydown', (e) => {
                 if (e.key === 'r' || e.key === 'R') recalibrate = true;
                 if (e.key === 'p' || e.key === 'P') {
@@ -301,14 +305,28 @@
                     statusElement.style.opacity = '1';
                     statusElement.innerText = `PITCH OFFSET: ${PITCH_OPTIONS[pitchOptionIndex]}°（撳 P 切換）`;
                 }
-                if (e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar') {
+                if (e.code === 'Enter' || e.key === 'Enter' || e.code === 'NumpadEnter') {
                     e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                        document.activeElement.blur();
+                    }
                     captureBtn.click();
                 }
-            });
+            }, true);
+
+            window.addEventListener('keyup', (e) => {
+                if (e.code === 'Enter' || e.key === 'Enter' || e.code === 'NumpadEnter') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                }
+            }, true);
 
             const fsBtn = document.getElementById('fsBtn');
             fsBtn.addEventListener('click', () => {
+                fsBtn.blur();
                 if (!document.fullscreenElement) {
                     document.documentElement.requestFullscreen().catch(() => {
                         showToast('此瀏覽器未能切換全螢幕');
@@ -317,7 +335,17 @@
                     document.exitFullscreen();
                 }
             });
+            fsBtn.addEventListener('keydown', (e) => {
+                if (e.code === 'Enter' || e.key === 'Enter' || e.code === 'NumpadEnter') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    fsBtn.blur();
+                    captureBtn.click();
+                }
+            });
             document.addEventListener('fullscreenchange', () => {
+                fsBtn.blur();
                 if (document.fullscreenElement) {
                     fsBtn.title = '退出全螢幕';
                     fsBtn.textContent = '✕';
@@ -587,6 +615,7 @@
             }
 
             captureBtn.addEventListener('click', async () => {
+                captureBtn.blur();
                 if (phase !== 'cycle') {
                     showToast('面具未戴上——先歡迎自己入職 😉');
                     return;
