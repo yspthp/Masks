@@ -35,12 +35,19 @@
         }
         #uiPanel.open { display: block; }
         #uiPanel input[type=range] { width: 100%; margin-top: 8px; accent-color: #00ffcc; }
-        /* ===== 截圖按鈕／閃光／提示 ===== */
+        /* ===== 截圖／全螢幕按鈕／閃光／提示 ===== */
         #captureBtn {
             position: fixed; bottom: 20px; left: 20px; z-index: 30;
             width: 52px; height: 52px; border-radius: 50%;
             background: rgba(0,0,0,0.6); border: 1px solid #00ffcc;
             font-size: 24px; cursor: pointer; backdrop-filter: blur(5px);
+        }
+        #fsBtn {
+            position: fixed; bottom: 20px; right: 76px; z-index: 30;
+            width: 46px; height: 46px; border-radius: 50%;
+            background: rgba(0,0,0,0.6); color: #00ffcc; border: 1px solid #00ffcc;
+            font-size: 20px; cursor: pointer; backdrop-filter: blur(5px);
+            display: flex; align-items: center; justify-content: center;
         }
         #flash { position: fixed; inset: 0; background: white; opacity: 0; pointer-events: none; z-index: 40; transition: opacity .15s; }
         #toast {
@@ -63,7 +70,15 @@
         }
         #question.show { opacity: 1; }
         @keyframes floatY { 0%,100% { margin-top: 0; } 50% { margin-top: -14px; } }
-    </style>
+            /* ===== V2 visual polish: additive only ===== */
+        body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:2; background:radial-gradient(circle at 50% 42%, rgba(0,255,204,.08), transparent 34%), linear-gradient(135deg, rgba(5,5,8,.18), rgba(5,5,8,.52)); mix-blend-mode:screen; }
+        #status { border-left-color:#d8b36a; background:rgba(8,10,14,.52); color:rgba(255,255,255,.78); text-transform:uppercase; transition:opacity .8s, border-color .8s; }
+        #question { max-width:760px; font-weight:300; text-shadow:0 0 22px rgba(0,255,204,.24), 0 2px 12px rgba(0,0,0,.72); }
+        #question::after { content:""; display:block; width:42px; height:1px; margin:14px auto 0; background:currentColor; opacity:.55; }
+        #captureBtn,#uiToggle,#fsBtn { box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 8px 30px rgba(0,0,0,.28); transition:transform .2s, background .2s, box-shadow .2s; }
+        #captureBtn:hover,#uiToggle:hover,#fsBtn:hover { transform:translateY(-2px) scale(1.04); background:rgba(0,255,204,.16); box-shadow:0 0 24px rgba(0,255,204,.2); }
+        #webgl-container::after { content:""; position:absolute; inset:0; pointer-events:none; background:radial-gradient(ellipse at center, transparent 48%, rgba(0,0,0,.26) 100%); }
+        @media (max-width:600px) { #question { top:12%; font-size:clamp(15px,4.6vw,21px); letter-spacing:2px; } #status{top:12px;left:12px;font-size:11px;} }</style>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
@@ -93,7 +108,8 @@
         </div>
         <button id="uiToggle" title="調整面具大小">⚙</button>
     </div>
-    <button id="captureBtn" title="拍下呢張相">📸</button>
+    <button id="fsBtn" title="切換全螢幕">⛶</button>
+    <button id="captureBtn" title="拍下呢張相（或按空白鍵）">📸</button>
     <div id="flash"></div>
     <div id="toast"></div>
 
@@ -103,7 +119,7 @@
         import { MeshSurfaceSampler } from 'three/addons/math/MeshSurfaceSampler.js';
 
         /* ================= 版本標籤 ================= */
-        const BUILD = '0912b';
+        const BUILD = '0912b-v2';
 
         /* ================= 遠端領取設定 ================= */
         const SUPABASE_URL    = 'https://oeesljbjiaqhwvhnvlip.supabase.co';
@@ -192,7 +208,15 @@
                     #claimLine1 { margin-top:20px; color:rgba(255,255,255,.92); font-size:15px;
                                   letter-spacing:2px; line-height:1.9; }
                     #claimLine2 { margin-top:10px; color:#00ffcc; font-size:15px; letter-spacing:3px; }
-                </style>
+                        /* ===== V2 visual polish: additive only ===== */
+        body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:2; background:radial-gradient(circle at 50% 42%, rgba(0,255,204,.08), transparent 34%), linear-gradient(135deg, rgba(5,5,8,.18), rgba(5,5,8,.52)); mix-blend-mode:screen; }
+        #status { border-left-color:#d8b36a; background:rgba(8,10,14,.52); color:rgba(255,255,255,.78); text-transform:uppercase; transition:opacity .8s, border-color .8s; }
+        #question { max-width:760px; font-weight:300; text-shadow:0 0 22px rgba(0,255,204,.24), 0 2px 12px rgba(0,0,0,.72); }
+        #question::after { content:""; display:block; width:42px; height:1px; margin:14px auto 0; background:currentColor; opacity:.55; }
+        #captureBtn,#uiToggle { box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 8px 30px rgba(0,0,0,.28); transition:transform .2s, background .2s, box-shadow .2s; }
+        #captureBtn:hover,#uiToggle:hover { transform:translateY(-2px) scale(1.04); background:rgba(0,255,204,.16); box-shadow:0 0 24px rgba(0,255,204,.2); }
+        #webgl-container::after { content:""; position:absolute; inset:0; pointer-events:none; background:radial-gradient(ellipse at center, transparent 48%, rgba(0,0,0,.26) 100%); }
+        @media (max-width:600px) { #question { top:12%; font-size:clamp(15px,4.6vw,21px); letter-spacing:2px; } #status{top:12px;left:12px;font-size:11px;} }</style>
                 <div id="claimWrap">
                     <h1>社畜照相館</h1>
                     <div id="claimSub">領取你嘅職員照</div>
@@ -276,6 +300,30 @@
                     modelPitchOffset = THREE.MathUtils.degToRad(PITCH_OPTIONS[pitchOptionIndex]);
                     statusElement.style.opacity = '1';
                     statusElement.innerText = `PITCH OFFSET: ${PITCH_OPTIONS[pitchOptionIndex]}°（撳 P 切換）`;
+                }
+                if (e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar') {
+                    e.preventDefault();
+                    captureBtn.click();
+                }
+            });
+
+            const fsBtn = document.getElementById('fsBtn');
+            fsBtn.addEventListener('click', () => {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(() => {
+                        showToast('此瀏覽器未能切換全螢幕');
+                    });
+                } else {
+                    document.exitFullscreen();
+                }
+            });
+            document.addEventListener('fullscreenchange', () => {
+                if (document.fullscreenElement) {
+                    fsBtn.title = '退出全螢幕';
+                    fsBtn.textContent = '✕';
+                } else {
+                    fsBtn.title = '切換全螢幕';
+                    fsBtn.textContent = '⛶';
                 }
             });
 
@@ -460,6 +508,7 @@
             }
 
             function applyAsset(i) {
+                document.documentElement.style.setProperty('--mask-index', i);
                 currentIndex = i;
                 const a = maskAssets[i];
                 particleSystem.geometry = a.geometry;
@@ -547,12 +596,12 @@
                 const blob = await capturePhoto();
                 if (SUPABASE_URL) {
                     try {
+                        showToast('正在上傳...');
                         await uploadLatest(blob);
-                        showToast('已上傳！掃場外 QR 即可領取');
+                        showToast('已上傳！掃描 QR Code 領取');
                     } catch (e) {
-                        console.error('UPLOAD ERROR:', e);
                         downloadBlob(blob);
-                        showToast('上傳失敗：' + (e && e.message ? e.message : e) + '（已改存本機）');
+                        showToast('上傳失敗，已直接下載照片');
                     }
                 } else {
                     downloadBlob(blob);
@@ -562,7 +611,10 @@
 
             (async () => {
                 const ok = await loadAllMasks();
-                if (!ok) { statusElement.innerText = "ERROR // 沒有任何有效模型"; return; }
+                if (!ok) {
+                    statusElement.innerText = "ERROR // 面具模型載入失敗";
+                    return;
+                }
                 particleSystem = new THREE.Points(maskAssets[0].geometry, createMaterial(maskAssets[0].texture, maskAssets[0].cfg));
                 applyAsset(0);
                 maskGroup.add(particleSystem);
@@ -572,8 +624,8 @@
             })();
 
             function initAIEngines() {
-                const faceMesh = new window.FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
-                faceMesh.setOptions({ maxNumFaces: 4, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+                const faceMesh = new FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
+                faceMesh.setOptions({ maxNumFaces: 4, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
                 faceMesh.onResults((results) => {
                     if (!particleSystem || !results.multiFaceLandmarks?.length) return;
@@ -582,23 +634,19 @@
                     const aspect = window.innerWidth / window.innerHeight;
 
                     const nose = lm[1];
-                    const eyeL = lm[33];
-                    const eyeR = lm[263];
                     trackedNose = { x: nose.x, y: nose.y };
-
+                    const eyeL = lm[33], eyeR = lm[263];
                     const cfg = maskAssets[currentIndex]?.cfg || {};
-                    const scaleMul = cfg.scaleMul ?? 1.0;
-                    const yOff = cfg.yOffset ?? MASK_Y_OFFSET;
+                    const yOff = MASK_Y_OFFSET + (cfg.yOffset || 0);
+                    const scaleMul = cfg.scaleMul || 1.0;
 
                     const anchorX = (lm[234].x + lm[454].x) / 2;
                     const FRUSTUM_W = FRUSTUM_H * aspect;
 
                     const eyeDist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
-                    /* 【修正 Bug 2】面高改用真實 2D 距離：對 roll／yaw 都不變 */
                     const faceH = Math.hypot(lm[152].x - lm[10].x, lm[152].y - lm[10].y);
                     const ratioNow = eyeDist / Math.max(1e-4, faceH);
 
-                    /* 正面度（純 yaw 指標） */
                     const frontalness = THREE.MathUtils.clamp(ratioNow / (scaleRatioBaseline || ratioNow), 0, 1.2);
                     const reliable = !scaleRatioBaseline || frontalness > 0.6;
 
@@ -634,68 +682,29 @@
 
                     const dynamicPitch = (rawRatio - base) * ROTATION_AMP;
                     const dynamicYaw   = THREE.MathUtils.clamp(((nose.x - eyeCenterX) / eyeDist) * ROTATION_AMP, -0.8, 0.8);
-                    /* 【修正 Bug 1】roll 加負號：鏡像管線下先至同頭部同向 */
                     const dynamicRoll  = THREE.MathUtils.clamp(-Math.atan2(eyeR.y - eyeL.y, eyeR.x - eyeL.x), -0.4, 0.4) * Math.min(1, frontalness);
 
                     const targetPitch = dynamicPitch + modelPitchOffset;
                     const targetYaw   = dynamicYaw   + MODEL_YAW_OFFSET;
                     const targetRoll  = dynamicRoll  + MODEL_ROLL_OFFSET;
 
-                    maskGroup.position.x += (targetX - maskGroup.position.x) * LERP_SPEED;
-                    maskGroup.position.y += (targetY - maskGroup.position.y) * LERP_SPEED;
-                    maskGroup.position.z += (targetZ - maskGroup.position.z) * LERP_SPEED;
+                    maskGroup.position.x = THREE.MathUtils.lerp(maskGroup.position.x, targetX, LERP_SPEED);
+                    maskGroup.position.y = THREE.MathUtils.lerp(maskGroup.position.y, targetY, LERP_SPEED);
+                    maskGroup.position.z = THREE.MathUtils.lerp(maskGroup.position.z, targetZ, LERP_SPEED);
 
-                    const videoAspect = (videoElement.videoWidth && videoElement.videoHeight)
-                        ? videoElement.videoWidth / videoElement.videoHeight : (16 / 9);
-                    const stretch = STRETCH_COMPENSATION ? (videoAspect / aspect) : 1.0;
-                    const newScale = maskGroup.scale.x + (targetScale - maskGroup.scale.x) * LERP_SPEED;
-                    maskGroup.scale.set(newScale, newScale * stretch, newScale);
+                    maskGroup.rotation.x = THREE.MathUtils.lerp(maskGroup.rotation.x, targetPitch, LERP_SPEED);
+                    maskGroup.rotation.y = THREE.MathUtils.lerp(maskGroup.rotation.y, targetYaw, LERP_SPEED);
+                    maskGroup.rotation.z = THREE.MathUtils.lerp(maskGroup.rotation.z, targetRoll, LERP_SPEED);
 
-                    let dPitch = targetPitch - maskGroup.rotation.x;
-                    maskGroup.rotation.x += Math.atan2(Math.sin(dPitch), Math.cos(dPitch)) * LERP_SPEED;
-
-                    let dYaw = targetYaw - maskGroup.rotation.y;
-                    maskGroup.rotation.y += Math.atan2(Math.sin(dYaw), Math.cos(dYaw)) * LERP_SPEED;
-
-                    let dRoll = targetRoll - maskGroup.rotation.z;
-                    maskGroup.rotation.z += Math.atan2(Math.sin(dRoll), Math.cos(dRoll)) * LERP_SPEED;
+                    maskGroup.scale.setScalar(THREE.MathUtils.lerp(maskGroup.scale.x, targetScale, LERP_SPEED));
                 });
 
-                const selfieSegmentation = new window.SelfieSegmentation({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}` });
-                selfieSegmentation.setOptions({ modelSelection: 1 });
-
-                selfieSegmentation.onResults((results) => {
-                    canvasCtx.save();
-                    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
-                    canvasCtx.filter = 'blur(15px) brightness(0.85)';
-                    canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-                    canvasCtx.filter = 'none';
-
-                    if (!window._fgCanvas) {
-                        window._fgCanvas = document.createElement('canvas');
-                        window._fgCtx = window._fgCanvas.getContext('2d');
-                    }
-                    const fg = window._fgCanvas, fgCtx = window._fgCtx;
-                    if (fg.width !== canvasElement.width || fg.height !== canvasElement.height) {
-                        fg.width = canvasElement.width;
-                        fg.height = canvasElement.height;
-                    }
-
-                    fgCtx.clearRect(0, 0, fg.width, fg.height);
-                    fgCtx.drawImage(results.image, 0, 0, fg.width, fg.height);
-                    fgCtx.globalCompositeOperation = 'destination-in';
-                    fgCtx.drawImage(results.segmentationMask, 0, 0, fg.width, fg.height);
-                    fgCtx.globalCompositeOperation = 'source-over';
-
-                    canvasCtx.drawImage(fg, 0, 0);
-                    canvasCtx.restore();
-                });
-
-                const cameraUtils = new window.Camera(videoElement, {
+                const cameraUtils = new Camera(videoElement, {
                     onFrame: async () => {
-                        await selfieSegmentation.send({ image: videoElement });
                         await faceMesh.send({ image: videoElement });
+                        canvasCtx.save();
+                        canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+                        canvasCtx.restore();
                     },
                     width: 1280, height: 720
                 });
