@@ -109,7 +109,7 @@
         <button id="uiToggle" title="調整面具大小">⚙</button>
     </div>
     <button id="fsBtn" title="切換全螢幕">⛶</button>
-    <button id="captureBtn" title="拍下呢張相（或按空白鍵）">📸</button>
+    <button id="captureBtn" title="拍下呢張相（或按 Enter 鍵）">📸</button>
     <div id="flash"></div>
     <div id="toast"></div>
 
@@ -213,8 +213,8 @@
         #status { border-left-color:#d8b36a; background:rgba(8,10,14,.52); color:rgba(255,255,255,.78); text-transform:uppercase; transition:opacity .8s, border-color .8s; }
         #question { max-width:760px; font-weight:300; text-shadow:0 0 22px rgba(0,255,204,.24), 0 2px 12px rgba(0,0,0,.72); }
         #question::after { content:""; display:block; width:42px; height:1px; margin:14px auto 0; background:currentColor; opacity:.55; }
-        #captureBtn,#uiToggle { box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 8px 30px rgba(0,0,0,.28); transition:transform .2s, background .2s, box-shadow .2s; }
-        #captureBtn:hover,#uiToggle:hover { transform:translateY(-2px) scale(1.04); background:rgba(0,255,204,.16); box-shadow:0 0 24px rgba(0,255,204,.2); }
+        #captureBtn,#uiToggle,#fsBtn { box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 8px 30px rgba(0,0,0,.28); transition:transform .2s, background .2s, box-shadow .2s; }
+        #captureBtn:hover,#uiToggle:hover,#fsBtn:hover { transform:translateY(-2px) scale(1.04); background:rgba(0,255,204,.16); box-shadow:0 0 24px rgba(0,255,204,.2); }
         #webgl-container::after { content:""; position:absolute; inset:0; pointer-events:none; background:radial-gradient(ellipse at center, transparent 48%, rgba(0,0,0,.26) 100%); }
         @media (max-width:600px) { #question { top:12%; font-size:clamp(15px,4.6vw,21px); letter-spacing:2px; } #status{top:12px;left:12px;font-size:11px;} }</style>
                 <div id="claimWrap">
@@ -301,7 +301,7 @@
                     statusElement.style.opacity = '1';
                     statusElement.innerText = `PITCH OFFSET: ${PITCH_OPTIONS[pitchOptionIndex]}°（撳 P 切換）`;
                 }
-                if (e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar') {
+                if (e.code === 'Enter' || e.key === 'Enter' || e.code === 'NumpadEnter') {
                     e.preventDefault();
                     captureBtn.click();
                 }
