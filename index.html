@@ -58,6 +58,40 @@
             max-width: 90vw; text-align: center;
         }
         #toast.show { opacity: 1; }
+        /* ===== 入職拍攝指引（入職須知卡） ===== */
+        #onboardGuide {
+            position: fixed; bottom: 88px; left: 50%;
+            transform: translateX(-50%) translateY(8px);
+            width: fit-content; max-width: min(90vw, 560px);
+            padding: 16px 24px;
+            background: linear-gradient(180deg, rgba(6, 10, 16, 0.76) 0%, rgba(4, 7, 12, 0.86) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-left: 3px solid #d8b36a;
+            border-radius: 4px 12px 12px 4px;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.48), 0 0 24px rgba(0, 255, 204, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(12px) saturate(125%); -webkit-backdrop-filter: blur(12px) saturate(125%);
+            color: rgba(255, 255, 255, 0.95);
+            font-size: clamp(13px, 1.6vw, 15px);
+            letter-spacing: 1.5px; line-height: 1.85;
+            text-align: left; pointer-events: none; z-index: 25;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+            opacity: 0;
+            transition: opacity 0.8s ease, transform 0.8s ease;
+        }
+        #onboardGuide.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        #onboardGuide .guide-title {
+            color: #00ffcc;
+            font-weight: 600;
+            letter-spacing: 2.5px;
+            margin-bottom: 6px;
+            text-align: center;
+        }
+        #onboardGuide .guide-step {
+            color: rgba(255, 255, 255, 0.94);
+        }
         /* ===== 浮空文字（開場＋問題） ===== */
         #question {
             position: absolute; left: 50%; top: 9%; transform: translateX(-50%);
@@ -86,7 +120,7 @@
         #captureBtn,#uiToggle,#fsBtn { background:rgba(6, 9, 14, 0.76); text-shadow:0 1px 4px rgba(0,0,0,0.9); box-shadow:0 0 0 1px rgba(255,255,255,.14), 0 8px 28px rgba(0,0,0,.42); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); transition:transform .2s, background .2s, box-shadow .2s; }
         #captureBtn:hover,#uiToggle:hover,#fsBtn:hover { transform:translateY(-2px) scale(1.04); background:rgba(6, 18, 20, 0.88); box-shadow:0 0 0 1px rgba(0,255,204,.5), 0 0 24px rgba(0,255,204,.28), 0 8px 28px rgba(0,0,0,.48); }
         #webgl-container::after { content:""; position:absolute; inset:0; pointer-events:none; background:linear-gradient(180deg, rgba(4,6,10,0.42) 0%, rgba(4,6,10,0.12) 18%, transparent 34%), radial-gradient(ellipse at center, transparent 48%, rgba(0,0,0,.34) 100%); }
-        @media (max-width:600px) { #question { top:10%; padding:12px 20px 14px; font-size:clamp(15px,4.6vw,21px); letter-spacing:2px; } #status{top:12px;left:12px;font-size:11px;} }</style>
+        @media (max-width:600px) { #question { top:10%; padding:12px 20px 14px; font-size:clamp(15px,4.6vw,21px); letter-spacing:2px; } #status{top:12px;left:12px;font-size:11px;} #onboardGuide{bottom:82px;padding:12px 16px;font-size:13px;letter-spacing:1px;} }</style>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
@@ -108,6 +142,12 @@
     <div id="webgl-container"></div>
 
     <div id="question"></div>
+
+    <div id="onboardGuide">
+        <div class="guide-title">【入職拍攝指引】</div>
+        <div class="guide-step">① 在這麼多張面具裡面，選擇一張你覺得最適合自己的面具吧</div>
+        <div class="guide-step">② 選擇好後，按下按鈕(快門)來拍下這張職員照</div>
+    </div>
 
     <div id="ui">
         <div id="uiPanel">
@@ -149,7 +189,7 @@
             '有沒有一刻，你想放下刺來，讓別人可以靠近？',
             '在意別人的目光，再累也不敢倒下來嗎？',
             '每次答應別人說「沒有問題」，是不敢有問題嗎？',
-            '不斷地跑，不斷儲存。什麼時候能停下來？',
+            '不斷地跑，不斷囤積著安全感。什麼時候能停下來？',
         ];
 
         /* ============ 領取頁通用回應 ============ */
@@ -283,6 +323,23 @@
             const captureBtn = document.getElementById('captureBtn');
             const flashEl = document.getElementById('flash');
             const toastEl = document.getElementById('toast');
+            const onboardGuideEl = document.getElementById('onboardGuide');
+
+            let guideTimer = null;
+            function showOnboardGuide() {
+                if (!onboardGuideEl) return;
+                onboardGuideEl.classList.add('show');
+                clearTimeout(guideTimer);
+                guideTimer = setTimeout(() => {
+                    hideOnboardGuide();
+                }, 6000);
+            }
+            function hideOnboardGuide() {
+                if (!onboardGuideEl) return;
+                onboardGuideEl.classList.remove('show');
+                clearTimeout(guideTimer);
+                guideTimer = null;
+            }
 
             let toastTimer = null;
             function showToast(msg) {
@@ -561,6 +618,7 @@
                 maskGroup.visible = false;
                 questionEl.classList.remove('show');
                 questionEl.textContent = '';
+                hideOnboardGuide();
                 pitchBaseline = null;
                 scaleRatioBaseline = null;
                 baselineCount = 0;
@@ -774,6 +832,7 @@
                     statusElement.innerText = `SYSTEM ACTIVE // build ${BUILD} // 站入鏡頭即開始`;
                     console.log('BUILD:', BUILD);
                     setTimeout(() => { statusElement.style.opacity = '0'; }, 5000);
+                    showOnboardGuide();
                 });
             }
 
@@ -800,6 +859,7 @@
                         introLineIndex = 0;
                         questionEl.textContent = INTRO_LINES[0];
                         questionEl.classList.add('show');
+                        showOnboardGuide();
                     } else if (introStarted) {
                         const el = (nowMs - introStart) / 1000;
                         let acc = 0, idx = INTRO_LINES.length;
@@ -811,6 +871,7 @@
                             phase = 'cycle';
                             maskGroup.visible = true;
                             lastFormedTime = t;
+                            hideOnboardGuide();
                             questionEl.textContent = QUESTIONS[currentIndex] || '';
                             questionEl.classList.add('show');
                         } else if (idx !== introLineIndex) {
